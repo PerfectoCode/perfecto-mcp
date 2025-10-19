@@ -24,3 +24,12 @@ class BaseResult(BaseModel):
 
     def model_dump_json(self, **kwargs):
         return super().model_dump_json(exclude_none=True, **kwargs)
+
+class PaginationResult(BaseResult):
+    items: List[Any] = Field(description="Items", default=[])
+    count: int = Field(description="Number of Items", default=0)
+    total: Optional[int] = Field(description="Total Items", default=0)
+    page: int = Field(description="Page index", default=0)
+    offset: int = Field(description="Offset index", default=0)
+    next_offset: int = Field(description="Next Offset index", default=0)
+    has_more: bool = Field(description="Has More", default=0)

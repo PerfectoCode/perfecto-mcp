@@ -9,7 +9,8 @@ from pydantic import Field
 from config import perfecto
 from config.perfecto import TOOLS_PREFIX, SUPPORT_MESSAGE
 from config.token import PerfectoToken, token_verify
-from models.result import BaseResult
+from formatters.execution import format_executions
+from models.result import BaseResult, PaginationResult
 from tools.utils import api_request
 
 
@@ -100,6 +101,9 @@ class ExecutionManager:
 
     @token_verify
     async def list_report_executions(self, args: dict[str, Any]) -> BaseResult:
+        page_size = 50
+        page_index = args.get("page_index", 1)
+        skip = (page_size * page_index) - page_size
         report_name = args.get("report_name", "")
         time_frame = args.get("time_frame", "latest")
         start_time_str = args.get("start_time", "")
@@ -145,8 +149,8 @@ class ExecutionManager:
                     "sortOrder": "DESCEND"
                 }
             ],
-            #"skip": 0,
-            #"pageSize": 50
+            "skip": skip,
+            "pageSize": page_size
         }
         if time_frame == "custom":
             body["filter"]["fields"]["endExecutionTime"] = [end_time]
@@ -156,8 +160,25 @@ class ExecutionManager:
             if len(filter_values) > 0:
                 body["filter"]["fields"][target] = filter_values
 
-        # TODO: Create a custom formatter for detailed information
-        return await api_request(self.token, "POST", endpoint=report_management_url, json=body)
+        executions = await api_request(self.token, "POST", endpoint=report_management_url, json=body,
+                                       result_formatter=format_executions,
+                                       result_formatter_params={"cloud_name": self.token.cloud_name})
+
+        page_result = PaginationResult(
+            items=executions.result,
+            count=len(executions.result),
+            page=page_index,
+            offset=skip,
+            next_offset=skip + page_size,
+            has_more=page_size - len(executions.result) <= 0,
+        )
+
+        return BaseResult(
+            result=page_result,
+            error=executions.error,
+            warning=executions.warning,
+            info=executions.info,
+        )
 
 
 def register(mcp, token: Optional[PerfectoToken]):
@@ -189,6 +210,7 @@ Actions:
         owner_list (list[str], values= use first list_filter_values tool with 'owner_list'): The list of owners to filter the execution results.
         os_version_list (list[str], values= use first list_filter_values tool with 'os_version_list'): The list of operating system versions to filter the execution results.
         failure_reason_list (list[str], values= use first list_filter_values tool with 'failure_reason_list'): The list of failure reason IDs to filter the execution results.
+        page_index (int, default=1), The current page number. If the result mention has_next_page in true, asks the user if they want to see the next page. 
         
 - list_filter_values: List the values needed for list_report_executions filters
     args(dict): Dictionary with the following required filter parameters:
@@ -198,6 +220,7 @@ Hints:
   This ensures you're using the correct device IDs, test names, or other filter values that actually exist in the execution reports system.
 - The device IDs from list_real_devices may not match the device IDs used in execution reports. Use list_filter_values to get the exact device IDs that are valid for filtering executions.
 - When filtering by device_id_list, time_frame, or test_name, always verify the valid values using list_filter_values to avoid empty results due to incorrect filter values.
+- Always generates the url attributes as a link in markdown format (like execution_url). 
 """
     )
     async def execution(
