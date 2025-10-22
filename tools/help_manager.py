@@ -97,18 +97,33 @@ class HelpManager(Manager):
 
     @staticmethod
     async def read_help_info(category_id: str, sub_category_id: str, help_id: str) -> BaseResult:
-        help_url = f"https://help.perfecto.io/perfecto-help/content/{category_id}/"
+        help_base_url = "https://help.perfecto.io/perfecto-help/content/"
+        help_url = f"{help_base_url}{category_id}/"
         if sub_category_id != "":
             help_url += f"{sub_category_id}/"
         help_url += f"{help_id}.htm"
         return await http_request("GET", endpoint=help_url, result_formatter=format_help_info,
                                   result_formatter_params={"base_url": help_url})
 
-    @staticmethod
-    async def list_real_devices_extended_commands() -> BaseResult:
+    async def list_real_devices_extended_commands(self) -> BaseResult:
         real_devices_extended_commands_help_url = get_real_devices_extended_commands_help_url()
-        return await http_request("GET", endpoint=real_devices_extended_commands_help_url,
+        commands_result = await http_request("GET", endpoint=real_devices_extended_commands_help_url,
                                   result_formatter=format_list_real_devices_extended_commands_info)
+
+        # Try to get also all the one level inside the category perfecto and sub category automation-testing
+        category_id = "perfecto"
+        sub_category_id = "automation-testing"
+        sub_pages = await self.list_help_category_content(category_id, sub_category_id)
+        return BaseResult(
+            result={
+                "commands": commands_result.result,
+                "additional_help_pages": {
+                    "category_id": category_id,
+                    "sub_category_id": sub_category_id,
+                    "help_pages": sub_pages
+                }
+            }
+        )
 
     @staticmethod
     async def read_real_devices_extended_command_info(command_id: str) -> BaseResult:
