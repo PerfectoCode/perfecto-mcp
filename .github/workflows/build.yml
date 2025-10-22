@@ -2,9 +2,9 @@ name: Build Binaries
 
 on:
   push:
-    branches: ['main']
+    branches: ['main', 'GITHUB_ACTIONS']
   pull_request:
-    branches: ['main']
+    branches: ['main', 'GITHUB_ACTIONS']
   workflow_dispatch:
 
 permissions:
