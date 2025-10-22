@@ -82,7 +82,7 @@ jobs:
   commit-artifacts:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/GITHUB_ACTIONS')
     steps:
     - uses: actions/checkout@v4
     
