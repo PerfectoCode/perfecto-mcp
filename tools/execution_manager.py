@@ -48,29 +48,6 @@ class ExecutionManager(Manager):
             "owner_list": "owner",
             "os_version_list": "osVersion"
         }
-        # TODO: Set the names based on UI values
-        self.grouping_map = {
-            "name": "",
-            "deviceType": "",
-            "deviceId": "",
-            "deviceModel": "",
-            "browserType": "",
-            "os": "",
-            "screenResolution": "",
-            "status": "",
-            "jobName": "",
-            "jobNumber": "",
-            "tags": "",
-            "projectVersion": "",
-            "projectName": "",
-            "cleanException": "",
-            "browserVersion": "",
-            "automationFramework": "",
-            "failureReason": "",
-            "osVersion": "",
-            "triggerType": "",
-            "normalizedCleanException": ""
-        }
 
     @token_verify
     async def list_live_executions(self) -> BaseResult:
@@ -90,7 +67,6 @@ class ExecutionManager(Manager):
                     "id": execution_id_list,
                 },
             }
-            # TODO: Create a custom formatter for detailed information
             return await api_request(self.token, "POST", endpoint=execution_management_url, json=body)
         else:
             return BaseResult(
@@ -101,7 +77,6 @@ class ExecutionManager(Manager):
     async def list_report_names(self) -> BaseResult:
         report_management_url = perfecto.get_test_execution_name_api_url(self.token.cloud_name)
         body = {}
-        # TODO: Create a custom formatter for detailed information
         return await api_request(self.token, "POST", endpoint=report_management_url, json=body)
 
     @token_verify
@@ -119,27 +94,6 @@ class ExecutionManager(Manager):
                 if filter_name in self.metadata_map and self.metadata_map[filter_name] in metadata["items"]:
                     filter_values[filter_name] = metadata["items"][self.metadata_map[filter_name]]["values"]
 
-        # TODO: Evaluate if it's needed a custom formatter for some metadata values
-        return BaseResult(
-            result=filter_values,
-        )
-
-    @token_verify
-    async def list_grouping_values(self, filter_names: list[str]) -> BaseResult:
-        metadata_management_url = perfecto.get_test_execution_metadata_api_url(self.token.cloud_name)
-
-        metadata_result = await api_request(self.token, "GET", endpoint=metadata_management_url)
-        metadata = metadata_result.result
-        filter_values = {}
-        for filter_name in filter_names:
-            if self.metadata_map[filter_name] in self.metadata_in_root:
-                if filter_name in self.metadata_map and self.metadata_map[filter_name] in metadata:
-                    filter_values[filter_name] = metadata[self.metadata_map[filter_name]]
-            else:
-                if filter_name in self.metadata_map and self.metadata_map[filter_name] in metadata["items"]:
-                    filter_values[filter_name] = metadata["items"][self.metadata_map[filter_name]]["values"]
-
-        # TODO: Evaluate if it's needed a custom formatter for some metadata values
         return BaseResult(
             result=filter_values,
         )

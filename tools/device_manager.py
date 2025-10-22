@@ -47,7 +47,6 @@ class DeviceManager(Manager):
     async def read_real_device_info(self, device_id: str) -> BaseResult:
         devices_url = perfecto.get_real_device_management_api_url(self.token.cloud_name)
         devices_url = f"{devices_url}/{device_id}"
-        # TODO: Create a custom formatter for detailed information
         return await api_request(self.token, "GET", endpoint=devices_url)
 
     @token_verify
