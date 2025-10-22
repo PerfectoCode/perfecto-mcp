@@ -25,10 +25,10 @@ class DeviceManager(Manager):
         tenant_response = await api_request(self.token, "GET", endpoint=tenant_url, result_formatter=format_grid_info)
 
         if tenant_response.error is None:
-            selenium_grid_url = tenant_response.result.selenium_grid_url
+            selenium_grid_url = tenant_response.result[0].selenium_grid_url
             # Expand the Selenium Grid Status
             selenium_grid_status_response = await api_request(self.token, "GET", endpoint=f"{selenium_grid_url}/status")
-            tenant_response.result.selenium_grid_status = selenium_grid_status_response.result
+            tenant_response.result[0].selenium_grid_status = selenium_grid_status_response.result
 
         return tenant_response
 
