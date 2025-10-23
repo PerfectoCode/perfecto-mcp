@@ -9,17 +9,17 @@ The Perfecto MCP Server connects AI tools directly to Perfecto's cloud-based tes
 
 ## Use Cases
 
-- Cross-Platform Device Testing: Validate applications on real, virtual, and desktop devices
+- **Cross-Platform Device Testing**: Validate applications on real, virtual, and desktop devices
 
-- Live Test Monitoring: Track execution status and intervene in real time
+- **Live Test Monitoring**: Track execution status and intervene in real time
 
-- Execution History Analysis: Review and filter past test runs for trends and troubleshooting
+- **Execution History Analysis**: Review and filter past test runs for trends and troubleshooting
 
-- Automated Test Management: Integrate device and execution operations into CI/CD workflows
+- **Automated Test Management**: Integrate device and execution operations into CI/CD workflows
 
-- Centralized Device Inventory: Maintain an up-to-date catalog of available testing devices
+- **Centralized Device Inventory**: Maintain an up-to-date catalog of available testing devices
 
-- In-Platform Troubleshooting: Access help content and command references directly within the platform
+- **In-Platform Troubleshooting**: Access help content and command references directly within the platform
 
 This MCP server essentially transforms Perfecto's enterprise-grade  testing platform into an AI-accessible service, enabling intelligent automation of complex testing workflows that would typically require significant manual intervention and knowledge.
 
