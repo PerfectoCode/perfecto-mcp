@@ -165,7 +165,7 @@ When using custom CA certificate bundles, you must configure both:
 ```json
 {
   "mcpServers": {
-    "Docker BlazeMeter MCP": {
+    "Docker Perfecto MCP": {
       "command": "docker",
       "args": [
         "run",
