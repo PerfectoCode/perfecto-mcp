@@ -1,6 +1,8 @@
 name: Build Multi-Platform Docker Images
 
 on:
+  push:
+    branches: [GITHUB_ACTIONS]
   workflow_run:
     workflows: ["Build Binaries"]
     types: [completed]
@@ -18,7 +20,7 @@ jobs:
   build-docker:
     name: Build Multi-Platform Docker Image
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'release' }}
+    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'release' }}
     
     permissions:
       contents: read
