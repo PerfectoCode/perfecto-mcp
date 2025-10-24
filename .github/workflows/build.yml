@@ -2,9 +2,9 @@ name: Build Binaries
 
 on:
   push:
-    branches: ['main', 'GITHUB_ACTIONS']
+    branches: ['main']
   pull_request:
-    branches: ['main', 'GITHUB_ACTIONS']
+    branches: ['main']
   workflow_dispatch:
 
 permissions:
@@ -82,7 +82,7 @@ jobs:
   commit-artifacts:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/GITHUB_ACTIONS')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
     - uses: actions/checkout@v4
     
