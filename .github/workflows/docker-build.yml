@@ -1,8 +1,6 @@
 name: Build Multi-Platform Docker Images
 
 on:
-  push:
-    branches: [GITHUB_ACTIONS]
   workflow_run:
     workflows: ["Build Binaries"]
     types: [completed]
