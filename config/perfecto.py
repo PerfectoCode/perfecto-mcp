@@ -14,6 +14,10 @@ PERFECTO_CLOUD_NAME_ENV_NAME: str = 'PERFECTO_CLOUD_NAME'
 SECURITY_TOKEN_NOT_SET_MESSAGE: str = f"Perfecto Security Token not set. Set environment variable {SECURITY_TOKEN_FILE_ENV_NAME} or {SECURITY_TOKEN_ENV_NAME}"
 PERFECTO_CLOUD_NAME_NOT_SET_MESSAGE: str = f"Perfecto Environment Cloud Name not set. Set environment variable {PERFECTO_CLOUD_NAME_ENV_NAME}"
 
+HELP_TOC_URL = "https://help.perfecto.io/perfecto-help/Data/Tocs/"
+HELP_INDEX_URL = f"{HELP_TOC_URL}perfecto_help.js"
+HELP_BASE_CONTENT_URL = "https://help.perfecto.io/perfecto-help/content/"
+
 def get_mcp_icon_uri():
     name = "app.png"
     try:
