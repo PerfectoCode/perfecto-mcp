@@ -1,14 +1,15 @@
 import asyncio
 import traceback
+from copy import deepcopy
 from itertools import chain
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
 
 import httpx
 from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from config.perfecto import TOOLS_PREFIX, SUPPORT_MESSAGE, get_real_devices_extended_commands_help_url, \
-    get_real_devices_extended_command_base_help_url
+    get_real_devices_extended_command_base_help_url, HELP_INDEX_URL, HELP_TOC_URL, HELP_BASE_CONTENT_URL
 from config.token import PerfectoToken
 from formatters.help import format_list_real_devices_extended_commands_info, \
     format_read_real_devices_extended_command_info, format_help_info
@@ -18,32 +19,60 @@ from tools.utils import http_request, convert_js_to_py_dict
 
 
 class HelpManager(Manager):
+    help_tree = None  # Static to share between different instance of HelpManager
+    help_items_index = {}
+    help_index_nodes = {}
+
     def __init__(self, token: Optional[PerfectoToken], ctx: Context):
         super().__init__(token, ctx)
-        self.help_tree = None
 
     async def _load_help_tree(self):
-        help_index_url = "https://help.perfecto.io/perfecto-help/Data/Tocs/perfecto_help.js"
+        help_index_url = HELP_INDEX_URL
         help_index_response = await http_request("GET", endpoint=help_index_url)
 
         help_index_response.result = convert_js_to_py_dict(help_index_response.result)
 
         num_chunks = help_index_response.result.get("numchunks", 6)
         chunk_prefix = help_index_response.result.get("prefix", "perfecto_help_Chunk")
+        help_tree_index = help_index_response.result.get("tree", {})
+
+        # Flat the tree to obtain each item nodes
+        help_tree_index_flat = {}
+        stack = list(help_tree_index.get("n", []))  # Root
+
+        while stack:
+            node = stack.pop()
+            children = node.get("n", [])
+
+            node_copy = deepcopy(node)
+            node_id = node_copy.get("i")
+            node_copy.pop("n", None)
+            node_copy.pop("c", None)
+            node_copy.pop("i", None)
+
+            help_tree_index_flat[node_id] = {
+                **node_copy,
+                "n": [ch["i"] for ch in children]
+            }
+            if children:
+                stack.extend(children)
 
         help_chunk_urls = []
 
         for i in range(num_chunks):
-            help_chunk_url = f"https://help.perfecto.io/perfecto-help/Data/Tocs/{chunk_prefix}{i}.js"
+            help_chunk_url = f"{HELP_TOC_URL}{chunk_prefix}{i}.js"
             help_chunk_urls.append(help_chunk_url)
 
-        async def fetch_chunk(chunk_url):
+        async def fetch_chunk(chunk_url: str):
             help_chunk_response = await http_request("GET", endpoint=chunk_url)
             help_chunk_response.result = convert_js_to_py_dict(help_chunk_response.result)
             help_content = []
             for url, content in help_chunk_response.result.items():
                 help_item = {"title": content.get("t", [""])[0],
-                             "help_id": url.replace("/content/", "").replace(".htm", "")}
+                             "help_id": url.replace("/content/", "").replace(".htm", ""),
+                             "help_tree_id": content.get("i", [""])[0]
+                             }
+                # Exclude '___' and all the 'release-notes/'
                 if help_item.get("help_id") == "___" or help_item.get("help_id").startswith("release-notes/"):
                     continue
                 help_content.append(help_item)
@@ -56,70 +85,123 @@ class HelpManager(Manager):
 
         help_tree = {}
         for item in merged:
+            tree_id = item.get("help_tree_id", 0)
             sections = item.get("help_id").split("/")
             category = sections[0]
             if len(sections) > 2:
-                sub_category = sections[1]
+                subcategory = sections[1]
                 new_id = "/".join(sections[2:])
             else:
-                sub_category = ""
+                subcategory = "self"
                 new_id = "/".join(sections[1:])
 
             item["help_id"] = new_id
             if category not in help_tree:
                 help_tree[category] = {}
-            if sub_category not in help_tree[category]:
-                help_tree[category][sub_category] = []
-            help_tree[category][sub_category].append(item)
+            if subcategory not in help_tree[category]:
+                help_tree[category][subcategory] = []
+            help_tree[category][subcategory].append(item)
 
-        self.help_tree = help_tree
+            HelpManager.help_items_index[f"{category}:{subcategory}:{new_id}"] = tree_id
+
+            if tree_id not in HelpManager.help_index_nodes:
+                HelpManager.help_index_nodes[tree_id] = {
+                    "category": category,
+                    "subcategory": subcategory,
+                    "help_id": new_id,
+                    "sub_nodes": help_tree_index_flat[tree_id]["n"]
+                }
+        HelpManager.help_tree = help_tree
 
     async def list_help_categories(self) -> BaseResult:
-        if self.help_tree is None:
+        if HelpManager.help_tree is None:
             await self._load_help_tree()
         categories = {}
-        for key in self.help_tree.keys():
-            categories[key] = list(self.help_tree[key].keys())
+        for key in HelpManager.help_tree.keys():
+            categories[key] = list(HelpManager.help_tree[key].keys())
         return BaseResult(
             result=categories,
             info=["A list of subcategories is provided for each category"]
         )
 
-    async def list_help_category_content(self, category_id: str, sub_category_id: str) -> BaseResult:
-        if self.help_tree is None:
+    async def list_help_category_content(self, category_id: str, subcategory_id_list: List[str]) -> BaseResult:
+        if HelpManager.help_tree is None:
             await self._load_help_tree()
-        if category_id in self.help_tree.keys() and sub_category_id in self.help_tree[category_id]:
-            return BaseResult(
-                result=self.help_tree[category_id][sub_category_id]
-            )
-        else:
-            return BaseResult(warning=[f"Category '{category_id}' and subcategory '{sub_category_id}' not found."])
+        results = []
+        for subcategory_id in subcategory_id_list:
+            if subcategory_id == "":
+                subcategory_id = "self"
+            if category_id in HelpManager.help_tree.keys() and subcategory_id in HelpManager.help_tree[category_id]:
+                results.append(HelpManager.help_tree[category_id][subcategory_id])
+            else:
+                results.append(
+                    BaseResult(warning=[f"Category '{category_id}' and subcategory '{subcategory_id}' not found."]))
+        return BaseResult(
+            result=results,
+        )
 
-    @staticmethod
-    async def read_help_info(category_id: str, sub_category_id: str, help_id: str) -> BaseResult:
-        help_base_url = "https://help.perfecto.io/perfecto-help/content/"
-        help_url = f"{help_base_url}{category_id}/"
-        if sub_category_id != "":
-            help_url += f"{sub_category_id}/"
-        help_url += f"{help_id}.htm"
-        return await http_request("GET", endpoint=help_url, result_formatter=format_help_info,
-                                  result_formatter_params={"base_url": help_url})
+    async def read_help_info(self, category_id: str, subcategory_id: str, help_id_list: List[str]) -> BaseResult:
+        if HelpManager.help_tree is None:
+            await self._load_help_tree()
+        results = []
+        if subcategory_id == "":
+            subcategory_id = "self"
+        for help_id in help_id_list:
+
+            help_base_url = HELP_BASE_CONTENT_URL
+            help_url = f"{help_base_url}{category_id}/"
+            if subcategory_id != "self":
+                help_url += f"{subcategory_id}/"
+            help_url += f"{help_id}.htm"
+
+            help_object = {
+                "help_id": help_id,
+            }
+            try:
+                result = await http_request("GET", endpoint=help_url, result_formatter=format_help_info,
+                                            result_formatter_params={"base_url": help_url})
+
+                # Expand or "Argument" the content ending with ""
+                if result.result.get("help_content", "").endswith("In this section:"):
+                    index_id = f"{category_id}:{subcategory_id}:{help_id}"
+                    sub_nodes_items = []
+                    if index_id in HelpManager.help_items_index:
+                        node_id = HelpManager.help_items_index[index_id]
+                        sub_nodes = HelpManager.help_index_nodes[node_id]["sub_nodes"]
+                        for sub_node in sub_nodes:
+                            if sub_node in HelpManager.help_index_nodes:
+                                sub_nodes_items.append(HelpManager.help_index_nodes[sub_node])
+                    help_object["sub_nodes"] = sub_nodes_items
+
+                help_object["help_result"] = result.result
+            except httpx.HTTPStatusError as e:
+                help_object["help_result"] = f"Error:{e.response.text}"
+
+            results.append(help_object)
+
+        return BaseResult(
+            result={
+                "category_id": category_id,
+                "subcategory_id": subcategory_id,
+                "help_results": results,
+            },
+        )
 
     async def list_real_devices_extended_commands(self) -> BaseResult:
         real_devices_extended_commands_help_url = get_real_devices_extended_commands_help_url()
         commands_result = await http_request("GET", endpoint=real_devices_extended_commands_help_url,
-                                  result_formatter=format_list_real_devices_extended_commands_info)
+                                             result_formatter=format_list_real_devices_extended_commands_info)
 
         # Try to get also all the one level inside the category perfecto and sub category automation-testing
         category_id = "perfecto"
-        sub_category_id = "automation-testing"
-        sub_pages = await self.list_help_category_content(category_id, sub_category_id)
+        subcategory_id = "automation-testing"
+        sub_pages = await self.list_help_category_content(category_id, [subcategory_id])
         return BaseResult(
             result={
                 "commands": commands_result.result,
                 "additional_help_pages": {
                     "category_id": category_id,
-                    "sub_category_id": sub_category_id,
+                    "subcategory_id": subcategory_id,
                     "help_pages": sub_pages
                 }
             }
@@ -144,12 +226,12 @@ Actions:
 - list_help_category_content: List all help_id list related with a category_id and subcategory_id.
     args(dict): Dictionary with the following required parameters:
         category_id (str): The category id.
-        sub_category_id (str): The subcategory id.
+        subcategory_id_list (List[str]): The subcategory id list.
 - read_help_info: Read the content of a help_id providing category_id, subcategory_id and help_id
     args(dict): Dictionary with the following required parameters:
         category_id (str): The category id.
-        sub_category_id (str): The subcategory id.
-        help_id (str): The help id.
+        subcategory_id (str): The sub-category id.
+        help_id_list (List[str]): The help id list to read.
 - list_real_devices_extended_commands: Perfecto provides support for extended RemoteWebDriver commands. You can use these commands as extensions to the default SDK. Perfecto extensions are also known as function references (FR).
 - read_real_devices_extended_command_info: Read the detailed command information.
     args(dict): Dictionary with the following required parameters:
@@ -171,10 +253,11 @@ Hints:
                     return await help_manager.list_help_categories()
                 case "list_help_category_content":
                     return await help_manager.list_help_category_content(args.get("category_id", "home"),
-                                                                         args.get("sub_category_id", ""))
+                                                                         args.get("subcategory_id_list", []))
                 case "read_help_info":
                     return await help_manager.read_help_info(args.get("category_id", "home"),
-                                                             args.get("sub_category_id", ""), args.get("help_id", ""))
+                                                             args.get("subcategory_id", ""),
+                                                             args.get("help_id_list", []))
                 case "list_real_devices_extended_commands":
                     return await help_manager.list_real_devices_extended_commands()
                 case "read_real_devices_extended_command_info":
