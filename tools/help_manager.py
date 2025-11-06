@@ -15,7 +15,8 @@ from formatters.help import format_list_real_devices_extended_commands_info, \
     format_read_real_devices_extended_command_info, format_help_info
 from models.manager import Manager
 from models.result import BaseResult
-from tools.utils import http_request, convert_js_to_py_dict
+from tools.help_utils import convert_js_to_py_dict
+from tools.utils import http_request
 
 
 class HelpManager(Manager):
@@ -242,10 +243,11 @@ Hints:
     )
     async def help_main(
             action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters"),
+            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
-
+        if args is None:
+            args = {}
         help_manager = HelpManager(token, ctx)
         try:
             match action:
