@@ -26,4 +26,4 @@ where = ["."]
 include = ["tools", "config", "models", "formatters", "resources"]
 
 [tool.setuptools.package-data]
-"resources" = ["*.png"]
+"resources" = ["**/*"]
