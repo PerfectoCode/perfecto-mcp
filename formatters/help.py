@@ -2,7 +2,8 @@ from typing import Any, Optional
 
 from lxml import html
 
-from tools.utils import html_to_markdown
+from tools.help_utils import html_to_markdown
+
 
 def format_help_info(html_content: str, params: Optional[dict] = None) -> dict[str, Any]:
     base_url = params.get("base_url")
