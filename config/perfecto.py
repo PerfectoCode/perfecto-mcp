@@ -63,8 +63,6 @@ def get_real_devices_extended_command_base_help_url() -> str:
     return "https://help.perfecto.io/perfecto-help/content/perfecto/automation-testing/"
 
 
-# https://beta.app.perfectomobile.com/native-automation-webapp/rest/v1/native-automation/scripts/tree
-# https://beta.app.perfectomobile.com/native-automation-webapp/rest/v1/native-automation/script?itemKey=PUBLIC%3ABeta%20Migration.xml
 def get_ai_scriptless_mobile_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/native-automation-webapp/rest/v1/native-automation"
 
