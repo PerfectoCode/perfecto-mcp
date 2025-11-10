@@ -213,7 +213,7 @@ Actions:
         
 - list_filter_values: List the values needed for list_report_executions filters
     args(dict): Dictionary with the following required filter parameters:
-        filter_names (list[str], values=['device_id_list', 'os_list', 'browser_list']): The filter name list.
+        filter_names (list[str], values=['device_id_list', 'os_list', 'platform_list', 'browser_list', 'job_name_list', 'trigger_list', 'tag_list', 'owner_list', 'os_version_list', 'failure_reason_list']): The filter name list.
 Hints:
 - IMPORTANT: Always call list_filter_values first to get valid filter values before using any filters in list_report_executions. 
   This ensures you're using the correct device IDs, test names, or other filter values that actually exist in the execution reports system.
