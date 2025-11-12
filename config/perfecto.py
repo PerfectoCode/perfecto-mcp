@@ -63,9 +63,9 @@ def get_real_devices_extended_command_base_help_url() -> str:
     return "https://help.perfecto.io/perfecto-help/content/perfecto/automation-testing/"
 
 
-def get_ai_scriptless_mobile_api_url(cloud_name: str) -> str:
+def get_ai_scriptless_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/native-automation-webapp/rest/v1/native-automation"
 
 
-def get_ai_scriptless_mobile_execution_api_url(cloud_name: str) -> str:
+def get_ai_scriptless_execution_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.perfectomobile.com/scriptless-mobile-engine/script-executor/api/executions"
