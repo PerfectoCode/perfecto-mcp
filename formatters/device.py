@@ -17,6 +17,8 @@ def format_real_device(devices: dict[str, Any], params: Optional[dict] = None) -
                             platform_version=d.get("osVersion"),
                             manufacturer=d.get("manufacturer"),
                             model=d.get("model"),
+                            location=d.get("location", ""),
+                            description=d.get("description", ""),
                             status=d.get("status"),
                             in_use=d.get("inUse", "false"),  # When device is on error inUse is None
                         )
