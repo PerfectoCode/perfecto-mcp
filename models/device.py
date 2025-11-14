@@ -8,6 +8,8 @@ class RealDevice(BaseModel):
     platform_version: str = Field(description="The Platform Version (capability=platformVersion)")
     manufacturer: str = Field(description="The Manufacturer (capability=manufacturer)")
     model: str = Field(description="The Model Name (capability=model)")
+    location: str = Field(description="The Location Name (capability=location)")
+    description: str = Field(description="The Device Description")
     status: str = Field(description="The Device Status")
     in_use: str = Field(description="Whether the device is in use")
 

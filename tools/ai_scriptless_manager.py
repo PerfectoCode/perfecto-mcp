@@ -67,12 +67,57 @@ class AiScriptlessManager(Manager):
     async def execute_test(self, test_id: str, device_type: str, device_under_test: dict[str, Any]) -> BaseResult:
         execute_url = perfecto.get_ai_scriptless_execution_api_url(self.token.cloud_name)
 
+        # This mapping allows us to detect when the AI gets confused and uses Perfecto-style capabilities.
+        # It also allows for reverse mapping from internal to capabilities from Perfecto.
+        att_map = {
+            "real": {
+                "device_id": "deviceId"
+            },
+            "virtual": {
+                "platform_name": "platformName",
+                "manufacturer": "manufacturer",
+                "model": "model",
+                "platform_version": "platformVersion"
+            },
+            "desktop": {
+                "platform_name": "platformName",
+                "platform_version": "platformVersion",
+                "browser_name": "browserName",
+                "browser_version": "browserVersion",
+                "resolution": "resolution",
+                "location": "location"
+            }
+        }
+
         dut = None
+        remapped_device_under_test = {}
+        # Remap the attributes to Perfecto Capabilities format
+        if device_type in att_map.keys():
+            for key in att_map[device_type].keys():
+                alt_key = att_map[device_type][key]
+                remapped_device_under_test[alt_key] = device_under_test.get(key, device_under_test.get(alt_key, None))
+
         if device_type == "real":
-            dut = device_under_test.get("device_id", None)
+            dut = remapped_device_under_test.get("deviceId", None)
+            if dut is None:
+                return BaseResult(
+                    error="Invalid value for device_under_test. The key device_id could not be found."
+                )
         elif device_type in ["virtual", "desktop"]:
-            dut = json.dumps(device_under_test, separators=(',', ':'))
-        if dut is not None and len(dut) > 0 :
+            # Verify if all the needed keys exist on the remapped version
+            key_not_found = []
+            for key in att_map[device_type].keys():
+                alt_key = att_map[device_type][key]
+                if alt_key not in remapped_device_under_test:
+                    key_not_found.append(key)
+            if len(key_not_found) == 0:
+                dut = json.dumps(remapped_device_under_test, separators=(',', ':'))
+            else:
+                keys_not_found_str = ",".join(key_not_found)
+                return BaseResult(
+                    error=f"Invalid value for device_under_test. The keys [{keys_not_found_str}] could not be found."
+                )
+        if dut is not None and len(dut) > 0:
             body = {
                 "params": {
                     "DUT": dut
@@ -83,8 +128,9 @@ class AiScriptlessManager(Manager):
             return await api_request(self.token, "POST", endpoint=execute_url, json=body)
         else:
             return BaseResult(
-                error=f"Invalid device_type or device_under_test value."
+                error="Invalid device_type or device_under_test value."
             )
+
 
 def register(mcp, token: Optional[PerfectoToken]):
     @mcp.tool(
@@ -98,37 +144,33 @@ Actions:
         visibility (str, default='PRIVATE' values=['PUBLIC', 'PRIVATE']): The visibility, PUBLIC=All Public Tests, PRIVATE=My private tests.
         owner_list (list[str], values= use first list_filter_values tool with 'owner_list'): The list of users to filter tests (owners).
         page_index (int, default=1), The current page number. If the result mention has_next_page in true, asks the user if they want to see the next page.
-- list_filter_values: List the values needed for list_report_executions filters
+- list_filter_values: List the values needed for list_tests filters.
     args(dict): Dictionary with the following required filter parameters:
         filter_names (list[str], values=['test_name', 'owner_list']): The filter name list.
-- execute_test: Execute a preconfigured AI Scriptless Test, you need to know the test_id of a created and configured test and the real device_id available an not in use to run the test.
+- execute_test: Execute a preconfigured AI Scriptless Test.
     args(dict): Dictionary with the following required parameters:
-        test_id (str): The test Id that should be started.
+        test_id (str): Test ID from list_tests()
         device_type (str, default='real', values=['real', 'virtual', 'desktop']: The device type. 
-        device_under_test (dict): The Device Under Test (DUT). 
-           If device_type it's:
-           - 'real': required device_under_test attributes = [
-               'device_id':'the real device_id value'
-           ]
-           - 'virtual': required device_under_test attributes = [
-               'platformName': 'the virtual device platform name value',
-               'manufacturer': 'the manufacturer name value',
-               'model': 'the model name value',
-               'platformVersion': 'the platform version value'
-            ]
-            - 'desktop': required device_under_test attributes = [
-                'platformName': 'the desktop platform name value',
-                'platformVersion': 'the platform version value',
-                'browserName': 'the browser name value',
-                'browserVersion': 'the browser version value',
-                'resolution': 'the resolution value',
-                'location': 'the location value'
-            ]
+        device_under_test (dict, required): Device configuration object.
+            When device_type='real': {device_id: str} (Get from list_real_devices()).
+            When device_type='virtual': {platform_name: str, manufacturer: str, model: str, platform_version: str} (Get from list_virtual_devices()).
+            When device_type='desktop': {platform_name: str, platform_version: str, browser_name: str, 
+                          browser_version: str, resolution: str, location: str} (Get from list_desktop_devices()).
 Hints:
 - IMPORTANT: Always call list_filter_values first to get valid filter values before using any filters in list_tests. 
   This ensures you're using the correct test name, list of owners users or other filter values that actually exist in the system.
-- Always check before running a test_id if the device_type and device_under_test exist and is available, not use device in use or malfunctioning.
-- Always monitor a device's operation while it's in use by checking the live executions.
+- If in any result has_next_page is true, ask the user if they want to see the next page or access all pages before making a subsequent call.
+- Before executing a test, follow this validation workflow:
+  1. list_tests() (get and validate test_id).
+  2. Get device configuration based on device_type:
+     - 'real': list_real_devices() (get device_id).
+     - 'virtual': list_virtual_devices() (get platform_name, manufacturer, model, platform_version).
+     - 'desktop': list_desktop_devices() (get platform_name, platform_version, browser_name, browser_version, resolution, location).
+  3. On real device use read_real_device_info() (verify device is available and not in use).
+  4. execute_test() (execute the test).
+  5. list_report_executions() with report name equal to test name and list_live_executions() when the device it's in use (monitor execution progress).
+- Always check before running a test_id if the device_type and device_under_test exist and is available (when it's a real device), not use device in use or malfunctioning.
+- Always monitor a real device's operation while it's in use by checking the information with read_real_device_info().
 - Always stop the execution by stopping the live execution (make sure it's the correct execution, such as the execution name or user ID).
 """
     )
@@ -148,8 +190,8 @@ Hints:
                     return await ai_scriptless_manager.list_filter_values(args.get("filter_names", []))
                 case "execute_test":
                     return await ai_scriptless_manager.execute_test(args.get("test_id", ""),
-                                                                           args.get("device_type", ""),
-                                                                           args.get("device_under_test", {}))
+                                                                    args.get("device_type", ""),
+                                                                    args.get("device_under_test", {}))
                 case _:
                     return BaseResult(
                         error=f"Action {action} not found in AI Scriptless manager tool"
