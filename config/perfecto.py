@@ -35,6 +35,10 @@ def get_test_execution_management_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/test-execution-management-webapp/rest/v1/test-execution-management"
 
 
+def get_test_execution_commands_api_url(cloud_name: str) -> str:
+    return f"https://{cloud_name}.app.perfectomobile.com/test-execution-commands-webapp/rest/v1/test-execution-commands"
+
+
 def get_test_execution_name_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/test-execution-management-webapp/rest/v1/metadata/search/testExecutionNames"
 

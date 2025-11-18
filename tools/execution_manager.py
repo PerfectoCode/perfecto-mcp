@@ -179,6 +179,20 @@ class ExecutionManager(Manager):
             info=executions.info,
         )
 
+    @token_verify
+    async def red_report_execution(self, execution_id: str) -> BaseResult:
+
+        report_commands_url = perfecto.get_test_execution_commands_api_url(self.token.cloud_name) + "/"
+
+        params = {
+            "testExecutionId": execution_id,
+            "includeCommandSummary": True,
+            "commandRequestType": "COMMAND_SUMMARY"
+        }
+
+        return await api_request(self.token, "GET", endpoint=report_commands_url, params=params,
+                                 result_formatter_params={"cloud_name": self.token.cloud_name})
+
 
 def register(mcp, token: Optional[PerfectoToken]):
     @mcp.tool(
@@ -214,6 +228,11 @@ Actions:
 - list_filter_values: List the values needed for list_report_executions filters
     args(dict): Dictionary with the following required filter parameters:
         filter_names (list[str], values=['device_id_list', 'os_list', 'platform_list', 'browser_list', 'job_name_list', 'trigger_list', 'tag_list', 'owner_list', 'os_version_list', 'failure_reason_list']): The filter name list.
+        
+- read_report_execution: Read report execution details (commands summary)
+    args(dict): Dictionary with the following required filter parameters:
+        execution_id (str): The report execution ID (obtained from list_report_executions).
+
 Hints:
 - IMPORTANT: Always call list_filter_values first to get valid filter values before using any filters in list_report_executions. 
   This ensures you're using the correct device IDs, test names, or other filter values that actually exist in the execution reports system.
@@ -242,6 +261,8 @@ Hints:
                     return await execution_manager.list_report_executions(args)
                 case "list_filter_values":
                     return await execution_manager.list_filter_values(args.get("filter_names", []))
+                case "read_report_execution":
+                    return await execution_manager.red_report_execution(args.get("execution_id", ""))
                 case _:
                     return BaseResult(
                         error=f"Action {action} not found in execution manager tool"
