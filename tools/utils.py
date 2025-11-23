@@ -107,6 +107,7 @@ def get_date_time_iso(timestamp: int) -> Optional[str]:
     else:
         return datetime.fromtimestamp(timestamp).isoformat()
 
+
 def get_resources_path():
     try:
         resources_path = resources.files("resources")
@@ -118,6 +119,7 @@ def get_resources_path():
             base_path = os.path.dirname(os.path.abspath(__file__))
         resources_path = Path(base_path) / 'resources'
     return resources_path
+
 
 def get_mcp_icon_uri():
     name = "app.png"

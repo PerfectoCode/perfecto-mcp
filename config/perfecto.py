@@ -35,6 +35,10 @@ def get_test_execution_management_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/test-execution-management-webapp/rest/v1/test-execution-management"
 
 
+def get_test_execution_commands_api_url(cloud_name: str) -> str:
+    return f"https://{cloud_name}.app.perfectomobile.com/test-execution-commands-webapp/rest/v1/test-execution-commands"
+
+
 def get_test_execution_name_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/test-execution-management-webapp/rest/v1/metadata/search/testExecutionNames"
 
@@ -61,3 +65,11 @@ def get_real_devices_extended_commands_help_url() -> str:
 
 def get_real_devices_extended_command_base_help_url() -> str:
     return "https://help.perfecto.io/perfecto-help/content/perfecto/automation-testing/"
+
+
+def get_ai_scriptless_api_url(cloud_name: str) -> str:
+    return f"https://{cloud_name}.app.perfectomobile.com/native-automation-webapp/rest/v1/native-automation"
+
+
+def get_ai_scriptless_execution_api_url(cloud_name: str) -> str:
+    return f"https://{cloud_name}.perfectomobile.com/scriptless-mobile-engine/script-executor/api/executions"
