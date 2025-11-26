@@ -81,7 +81,7 @@ def build():
         '--onefile',
         '--version-file=version_info.txt',
         f'--add-data=pyproject.toml{sep}.',
-        f'--add-data=resources/app.png{sep}resources',
+        f'--add-data=resources{sep}resources',
         f'--name={name}',
         f'--icon={icon}',
         '--clean',

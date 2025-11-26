@@ -65,6 +65,14 @@ def run(log_level: str = "CRITICAL"):
     instructions = """
 # Perfecto MCP Server
 
+Use Perfecto MCP (Model Context Protocol) to interact with Perfecto cloud services. 
+Use this MCP Server when you need to query devices, retrieve execution reports, access help documentation, 
+manage scriptless tests, explore available skills, or get user information programmatically through the MCP interface.
+
+Use perfecto_skills tool to discover Perfecto skills.
+Start with perfecto-mcp-tools skill to understand available MCP tools.
+Then discover and read relevant skills based on user queries.
+
 """
 
     mcp = FastMCP("perfecto-mcp", instructions=instructions,
