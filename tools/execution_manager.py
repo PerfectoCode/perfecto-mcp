@@ -86,16 +86,26 @@ class ExecutionManager(Manager):
         metadata_result = await api_request(self.token, "GET", endpoint=metadata_management_url)
         metadata = metadata_result.result
         filter_values = {}
+        filter_not_found = []
         for filter_name in filter_names:
-            if self.metadata_map[filter_name] in self.metadata_in_root:
-                if filter_name in self.metadata_map and self.metadata_map[filter_name] in metadata:
+            if filter_name in self.metadata_map:
+                if self.metadata_map[filter_name] in self.metadata_in_root and self.metadata_map[
+                    filter_name] in metadata:
                     filter_values[filter_name] = metadata[self.metadata_map[filter_name]]
-            else:
-                if filter_name in self.metadata_map and self.metadata_map[filter_name] in metadata["items"]:
+                elif self.metadata_map[filter_name] in metadata["items"]:
                     filter_values[filter_name] = metadata["items"][self.metadata_map[filter_name]]["values"]
+            else:
+                filter_not_found.append(filter_name)
 
+        error = None
+        warnings = None
+        if len(filter_not_found) > 0:
+            error = f"Error, invalid filter_names values: {','.join(filter_not_found)}"
+            warnings = [f"Make sure to use valid filter_names values: {','.join(self.metadata_map.keys())}"]
         return BaseResult(
             result=filter_values,
+            error=error,
+            warning=warnings,
         )
 
     @token_verify
@@ -204,10 +214,10 @@ Actions:
 - stop_live_executions: Stop live executions.
     args(dict): Dictionary with the following required parameters:
         execution_id_list (list[str]): The execution Id to to be stopped.
-- list_report_names: List alls report names.
+- list_report_names: List alls report names (also known as Test Names).
 - list_report_executions: List finished executions.
     args(dict): Dictionary with the following optional filter parameters:
-        report_name (str): The report name.
+        report_name (str): The report name (also known as Test Name).
         time_frame (str, default='latest', values['latest','last24','lastWeek','lastMonth', 'custom']): 
             The time frame to filter the execution results. 
             latest=Today, last24=Last 24 hours, lastWeek=Last 7 days, lastMonth=Last 30 days, custom= Custom Filter Range (use start_time and end_time).
