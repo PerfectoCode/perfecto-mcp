@@ -117,9 +117,13 @@ class HelpManager(Manager):
     async def list_help_categories(self) -> BaseResult:
         if HelpManager.help_tree is None:
             await self._load_help_tree()
-        categories = {}
+        categories = []
         for key in HelpManager.help_tree.keys():
-            categories[key] = list(HelpManager.help_tree[key].keys())
+            category = {
+                "category": key,
+                "subcategories": list(HelpManager.help_tree[key].keys()),
+            }
+            categories.append(category)
         return BaseResult(
             result=categories,
             info=["A list of subcategories is provided for each category"]
