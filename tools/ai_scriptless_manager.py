@@ -56,11 +56,23 @@ class AiScriptlessManager(Manager):
         filter_values_result = await api_request(self.token, "GET", endpoint=tree_url,
                                                  result_formatter=format_ai_scriptless_tests_filter_values)
         filter_values = {}
+        filter_not_found = []
         for filter_name in filter_names:
-            filter_values[filter_name] = filter_values_result.result[filter_name]
+            if filter_name in filter_values_result.result:
+                filter_values[filter_name] = filter_values_result.result[filter_name]
+            else:
+                filter_not_found.append(filter_name)
+
+        error = None
+        warnings = None
+        if len(filter_not_found) > 0:
+            error = f"Error, invalid filter_names values: {','.join(filter_not_found)}"
+            warnings = [f"Make sure to use valid filter_names values: {','.join(['test_name', 'owner_list'])}"]
 
         return BaseResult(
             result=filter_values,
+            error=error,
+            warning=warnings,
         )
 
     @token_verify
