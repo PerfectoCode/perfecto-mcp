@@ -17,7 +17,7 @@ from tools.skills_utils import list_skills, read_skill_definition, read_skill_fi
 # More info about Skills https://github.com/anthropics/skills
 
 class SkillsManager(Manager):
-    skills = None  # Static to share between different instance of HelpManager
+    skills = None  # Static to share between different instance of SkillsManager
 
     def __init__(self, token: Optional[PerfectoToken], ctx: Context):
         super().__init__(token, ctx)
