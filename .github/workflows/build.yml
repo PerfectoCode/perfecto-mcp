@@ -19,6 +19,9 @@ jobs:
           - os: ubuntu-24.04
             name: linux
             arch: amd64
+          - os: ubuntu-24.04-arm
+            name: linux
+            arch: arm64
           - os: windows-latest  
             name: windows
             arch: amd64
@@ -114,14 +117,22 @@ jobs:
           echo "Copied Windows AMD64 binary"
         fi
         if [ -d "artifacts/perfecto-mcp-macos-arm64" ]; then
-          cp artifacts/perfecto-mcp-macos-arm64/* dist/
-          chmod +x dist/perfecto-mcp-macos-arm64
-          echo "Copied macOS ARM64 binary"
+          cp -r artifacts/perfecto-mcp-macos-arm64/* dist/
+          if [ -d "dist/perfecto-mcp-arm64.app" ]; then
+            echo "Found macOS ARM64 .app bundle"
+          else
+            chmod +x dist/perfecto-mcp-macos-arm64 2>/dev/null || true
+            echo "Copied macOS ARM64 binary"
+          fi
         fi
         if [ -d "artifacts/perfecto-mcp-macos-amd64" ]; then
-          cp artifacts/perfecto-mcp-macos-amd64/* dist/
-          chmod +x dist/perfecto-mcp-macos-amd64
-          echo "Copied macOS AMD64 binary"
+          cp -r artifacts/perfecto-mcp-macos-amd64/* dist/
+          if [ -d "dist/perfecto-mcp-amd64.app" ]; then
+            echo "Found macOS AMD64 .app bundle"
+          else
+            chmod +x dist/perfecto-mcp-macos-amd64 2>/dev/null || true
+            echo "Copied macOS AMD64 binary"
+          fi
         fi
 
         echo "Final dist/ contents:"
