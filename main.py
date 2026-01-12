@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP, Icon
 from config.perfecto import SECURITY_TOKEN_FILE_ENV_NAME, SECURITY_TOKEN_ENV_NAME, PERFECTO_CLOUD_NAME_ENV_NAME, \
     GITHUB
 from config.token import PerfectoToken, PerfectoTokenError
-from config.version import __version__, __executable__, __uvx__, get_version
+from config.version import __version__, __executable__, __bundle__, __uvx__, get_version
 from server import register_tools
 
 PERFECTO_SECURITY_TOKEN_FILE_NAME = "perfecto-security-token.txt"
@@ -38,7 +38,10 @@ def get_token() -> PerfectoToken:
     is_docker = os.getenv('MCP_DOCKER', 'false').lower() == 'true'
     token = None
 
-    local_security_token_file = os.path.join(os.path.dirname(__executable__), PERFECTO_SECURITY_TOKEN_FILE_NAME)
+    if sys.platform == "darwin" and __bundle__.endswith(".app"):
+        local_security_token_file = os.path.join(os.path.dirname(__bundle__), PERFECTO_SECURITY_TOKEN_FILE_NAME)
+    else:
+        local_security_token_file = os.path.join(os.path.dirname(__executable__), PERFECTO_SECURITY_TOKEN_FILE_NAME)
     if not PERFECTO_SECURITY_TOKEN_FILE_PATH and os.path.exists(local_security_token_file):
         PERFECTO_SECURITY_TOKEN_FILE_PATH = local_security_token_file
 
@@ -119,7 +122,11 @@ def main():
         else:
             perfecto_environment_str = f"{PERFECTO_CLOUD_NAME}"
 
-        command = "uvx" if __uvx__ else __executable__
+        if sys.platform == "darwin" and __bundle__.endswith(".app"):
+            command_path = os.path.join(__bundle__, "Contents", "MacOS", "perfecto-mcp")
+        else:
+            command_path = __executable__
+        command = "uvx" if __uvx__ else command_path
         args = ["--mcp"]
         if __uvx__:
             args = [
