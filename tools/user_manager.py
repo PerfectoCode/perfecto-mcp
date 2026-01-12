@@ -36,10 +36,11 @@ Actions:
     )
     async def user(
             action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters"),
+            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
-
+        if args is None:
+            args = {}
         user_manager = UserManager(token, ctx)
         try:
             match action:

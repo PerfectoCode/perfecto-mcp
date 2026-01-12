@@ -86,16 +86,26 @@ class ExecutionManager(Manager):
         metadata_result = await api_request(self.token, "GET", endpoint=metadata_management_url)
         metadata = metadata_result.result
         filter_values = {}
+        filter_not_found = []
         for filter_name in filter_names:
-            if self.metadata_map[filter_name] in self.metadata_in_root:
-                if filter_name in self.metadata_map and self.metadata_map[filter_name] in metadata:
+            if filter_name in self.metadata_map:
+                if self.metadata_map[filter_name] in self.metadata_in_root and self.metadata_map[
+                    filter_name] in metadata:
                     filter_values[filter_name] = metadata[self.metadata_map[filter_name]]
-            else:
-                if filter_name in self.metadata_map and self.metadata_map[filter_name] in metadata["items"]:
+                elif self.metadata_map[filter_name] in metadata["items"]:
                     filter_values[filter_name] = metadata["items"][self.metadata_map[filter_name]]["values"]
+            else:
+                filter_not_found.append(filter_name)
 
+        error = None
+        warnings = None
+        if len(filter_not_found) > 0:
+            error = f"Error, invalid filter_names values: {','.join(filter_not_found)}"
+            warnings = [f"Make sure to use valid filter_names values: {','.join(self.metadata_map.keys())}"]
         return BaseResult(
             result=filter_values,
+            error=error,
+            warning=warnings,
         )
 
     @token_verify
@@ -179,6 +189,20 @@ class ExecutionManager(Manager):
             info=executions.info,
         )
 
+    @token_verify
+    async def red_report_execution(self, execution_id: str) -> BaseResult:
+
+        report_commands_url = perfecto.get_test_execution_commands_api_url(self.token.cloud_name) + "/"
+
+        params = {
+            "testExecutionId": execution_id,
+            "includeCommandSummary": True,
+            "commandRequestType": "COMMAND_SUMMARY"
+        }
+
+        return await api_request(self.token, "GET", endpoint=report_commands_url, params=params,
+                                 result_formatter_params={"cloud_name": self.token.cloud_name})
+
 
 def register(mcp, token: Optional[PerfectoToken]):
     @mcp.tool(
@@ -190,10 +214,10 @@ Actions:
 - stop_live_executions: Stop live executions.
     args(dict): Dictionary with the following required parameters:
         execution_id_list (list[str]): The execution Id to to be stopped.
-- list_report_names: List alls report names.
+- list_report_names: List alls report names (also known as Test Names).
 - list_report_executions: List finished executions.
     args(dict): Dictionary with the following optional filter parameters:
-        report_name (str): The report name.
+        report_name (str): The report name (also known as Test Name).
         time_frame (str, default='latest', values['latest','last24','lastWeek','lastMonth', 'custom']): 
             The time frame to filter the execution results. 
             latest=Today, last24=Last 24 hours, lastWeek=Last 7 days, lastMonth=Last 30 days, custom= Custom Filter Range (use start_time and end_time).
@@ -213,7 +237,12 @@ Actions:
         
 - list_filter_values: List the values needed for list_report_executions filters
     args(dict): Dictionary with the following required filter parameters:
-        filter_names (list[str], values=['device_id_list', 'os_list', 'browser_list']): The filter name list.
+        filter_names (list[str], values=['device_id_list', 'os_list', 'platform_list', 'browser_list', 'job_name_list', 'trigger_list', 'tag_list', 'owner_list', 'os_version_list', 'failure_reason_list']): The filter name list.
+        
+- read_report_execution: Read report execution details (commands summary)
+    args(dict): Dictionary with the following required filter parameters:
+        execution_id (str): The report execution ID (obtained from list_report_executions).
+
 Hints:
 - IMPORTANT: Always call list_filter_values first to get valid filter values before using any filters in list_report_executions. 
   This ensures you're using the correct device IDs, test names, or other filter values that actually exist in the execution reports system.
@@ -224,10 +253,11 @@ Hints:
     )
     async def execution(
             action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters"),
+            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
-
+        if args is None:
+            args = {}
         execution_manager = ExecutionManager(token, ctx)
         try:
             match action:
@@ -241,6 +271,8 @@ Hints:
                     return await execution_manager.list_report_executions(args)
                 case "list_filter_values":
                     return await execution_manager.list_filter_values(args.get("filter_names", []))
+                case "read_report_execution":
+                    return await execution_manager.red_report_execution(args.get("execution_id", ""))
                 case _:
                     return BaseResult(
                         error=f"Action {action} not found in execution manager tool"

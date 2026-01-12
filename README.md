@@ -201,12 +201,13 @@ When using custom CA certificate bundles, you must configure both:
 The Perfecto MCP Server provides comprehensive access to Perfecto's API through four main tools:
 TODO:
 
-| Tool          | Purpose           | Key Capabilities                                                                                         |
-|---------------|-------------------|----------------------------------------------------------------------------------------------------------|
-| **User**      | User Information  | Get current user details                                                                                 |
-| **Devices**   | Device Management | Lists real, virtual, and browser devices required for use with RemoteWebDriver (selenium capabilities)   |
-| **Execution** | Test Execution    | Live view of running devices (Live Stream), View reports with search capabilities (Report Library)       |
-| **Help**      | Help Management   | Allows you to list or search for command capabilities and other information in the Perfecto help system. |
+| Tool              | Purpose             | Key Capabilities                                                                                         |
+|-------------------|---------------------|----------------------------------------------------------------------------------------------------------|
+| **User**          | User Information    | Get current user details                                                                                 |
+| **Devices**       | Device Management   | Lists real, virtual, and browser devices required for use with RemoteWebDriver (selenium capabilities).  |
+| **Execution**     | Test Execution      | Live view of running devices (Live Stream), View reports with search capabilities (Report Library).      |
+| **AI Scriptless** | AI Scriptless Tests | List, filter and execute AI Scriptless Tests.                                                            |
+| **Help**          | Help Management     | Allows you to list or search for command capabilities and other information in the Perfecto help system. |
 
 ---
 
@@ -248,6 +249,19 @@ TODO:
 | Filter Value Discovery | Retrieve valid filter values for execution queries (device IDs, OS, browsers, etc.) |
 
 **When to use:** When you need to see what is running or the result of completed runs.
+
+---
+
+### **AI Sciptless**
+**What it does:** It allows you to have a view of all AI Scriptless test scripts and run them.
+
+| Action                 | What you get                                                                                                                                              |
+|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| List Tests             | List all AI Scriptless Tests (Public or Privates)                                                                                                         |
+| Filter Value Discovery | Retrieve valid filter values for the list of tests (Test names or Owners)                                                                                 |
+| Execution              | Execute a Test ID on a specific Device Under Test (DUT)                                                                                                   |
+
+**When to use:** When you need to see what AI Scriptless tests exist and when you need to run one of them.
 
 ---
 
