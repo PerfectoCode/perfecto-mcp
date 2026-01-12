@@ -130,7 +130,7 @@ The easiest way to configure your MCP client is using our interactive CLI tool:
         "PERFECTO_CLOUD_NAME=your_cloud_name",
         "-e",
         "PERFECTO_SECURITY_TOKEN=your_security_token",
-        "ghcr.io/PerfectoCode/perfecto-mcp:latest"
+        "ghcr.io/perfectocode/perfecto-mcp:latest"
       ]
     }
   }
@@ -179,7 +179,7 @@ When using custom CA certificate bundles, you must configure both:
         "PERFECTO_CLOUD_NAME=your_cloud_name",
         "-e",
         "PERFECTO_SECURITY_TOKEN=your_security_token",
-        "ghcr.io/PerfectoCode/perfecto-mcp:latest"
+        "ghcr.io/perfectocode/perfecto-mcp:latest"
       ]
     }
   }
