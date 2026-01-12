@@ -26,7 +26,7 @@ def init_logging(level_name: str) -> None:
     logging.basicConfig(
         level=level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        stream=sys.stdout,
+        stream=sys.stderr,
         force=True,
     )
 
@@ -99,9 +99,9 @@ def main():
     )
 
     args = parser.parse_args()
-    init_logging(args.log_level)
-
+    
     if args.mcp:
+        init_logging(args.log_level)
         run(log_level=args.log_level.upper())
     else:
 
