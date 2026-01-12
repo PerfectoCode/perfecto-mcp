@@ -29,8 +29,8 @@ COPY dist/ ./dist/
 
 # Select and copy the appropriate binary based on target platform
 RUN case "${TARGETPLATFORM}" in \
-    "linux/amd64") cp ./dist/perfecto-mcp-linux-amd64 ./bzm-mcp ;; \
-    "linux/arm64") cp ./dist/perfecto-mcp-linux-arm64 ./bzm-mcp ;; \
+    "linux/amd64") cp ./dist/perfecto-mcp-linux-amd64 ./perfecto-mcp ;; \
+    "linux/arm64") cp ./dist/perfecto-mcp-linux-arm64 ./perfecto-mcp ;; \
     *) echo "Unsupported platform: ${TARGETPLATFORM}. Supported: linux/amd64, linux/arm64" && exit 1 ;; \
     esac && \
     echo "Selected binary for platform: ${TARGETPLATFORM}" && \
