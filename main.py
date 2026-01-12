@@ -8,7 +8,7 @@ from typing import Literal, cast
 from mcp.server.fastmcp import FastMCP, Icon
 
 from config.perfecto import SECURITY_TOKEN_FILE_ENV_NAME, SECURITY_TOKEN_ENV_NAME, PERFECTO_CLOUD_NAME_ENV_NAME, \
-    WEBSITE, get_mcp_icon_uri, GITHUB
+    GITHUB
 from config.token import PerfectoToken, PerfectoTokenError
 from config.version import __version__, __executable__, __bundle__, __uvx__, get_version
 from server import register_tools
@@ -69,8 +69,8 @@ def run(log_level: str = "CRITICAL"):
 # Perfecto MCP Server
 
 """
-    perfecto_icon = Icon(src=get_mcp_icon_uri(), mimeType="image/png", sizes=["64x64"])
-    mcp = FastMCP("perfecto-mcp", icons=[perfecto_icon], website_url=WEBSITE, instructions=instructions,
+
+    mcp = FastMCP("perfecto-mcp", instructions=instructions,
                   log_level=cast(LOG_LEVELS, log_level))
     register_tools(mcp, token)
     mcp.run(transport="stdio")

@@ -1,7 +1,3 @@
-import base64
-from pathlib import Path
-from importlib import resources
-
 TOOLS_PREFIX: str = "perfecto"
 WEBSITE: str = "https://github.com/PerfectoCore/perfecto-mcp/"
 GITHUB: str = "https://github.com/PerfectoCore/perfecto-mcp"
@@ -18,18 +14,6 @@ HELP_TOC_URL = "https://help.perfecto.io/perfecto-help/Data/Tocs/"
 HELP_INDEX_URL = f"{HELP_TOC_URL}perfecto_help.js"
 HELP_BASE_CONTENT_URL = "https://help.perfecto.io/perfecto-help/content/"
 
-def get_mcp_icon_uri():
-    name = "app.png"
-    try:
-        icon_path = resources.files("../resources").joinpath(name)
-        # print(icon_path)
-    except Exception:
-        icon_path = (Path(__file__).parent.parent / "resources" / name)
-        # print(icon_path)
-
-    # icon_path = Path(__file__).parent.parent / "app.png"
-    icon_data = base64.standard_b64encode(icon_path.read_bytes()).decode()
-    return f"data:image/png;base64,{icon_data}"
 
 def get_tenant_management_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/tenant-management-webapp/rest/v1/tenant-management/tenants/current"
@@ -51,6 +35,10 @@ def get_test_execution_management_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/test-execution-management-webapp/rest/v1/test-execution-management"
 
 
+def get_test_execution_commands_api_url(cloud_name: str) -> str:
+    return f"https://{cloud_name}.app.perfectomobile.com/test-execution-commands-webapp/rest/v1/test-execution-commands"
+
+
 def get_test_execution_name_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/test-execution-management-webapp/rest/v1/metadata/search/testExecutionNames"
 
@@ -70,8 +58,18 @@ def get_virtual_device_management_api_url(cloud_name: str) -> str:
 def get_web_desktop_management_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.perfectomobile.com/web/api/v1/config/devices"
 
+
 def get_real_devices_extended_commands_help_url() -> str:
     return "https://help.perfecto.io/perfecto-help/content/perfecto/automation-testing/perfecto_extensions.htm"
 
+
 def get_real_devices_extended_command_base_help_url() -> str:
     return "https://help.perfecto.io/perfecto-help/content/perfecto/automation-testing/"
+
+
+def get_ai_scriptless_api_url(cloud_name: str) -> str:
+    return f"https://{cloud_name}.app.perfectomobile.com/native-automation-webapp/rest/v1/native-automation"
+
+
+def get_ai_scriptless_execution_api_url(cloud_name: str) -> str:
+    return f"https://{cloud_name}.perfectomobile.com/scriptless-mobile-engine/script-executor/api/executions"
