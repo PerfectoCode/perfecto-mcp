@@ -1,4 +1,4 @@
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/perfectocode/perfecto-mcp/total?style=for-the-badge&link=https%3A%2F%2Fgithub.com%2FBlazemeter%2Fbzm-mcp%2Freleases)
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/perfectocode/perfecto-mcp/total?style=for-the-badge&link=https%3A%2F%2Fgithub.com%2FPerfectoCode%2Fperfecto-mcp%2Freleases)
 [![GHCR Pulls](https://ghcr-badge.elias.eu.org/shield/PerfectoCode/perfecto-mcp/perfecto-mcp?style=for-the-badge)](https://github.com/PerfectoCode/perfecto-mcp/pkgs/container/perfecto-mcp)
 
 ---
