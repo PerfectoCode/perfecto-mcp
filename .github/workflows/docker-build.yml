@@ -4,7 +4,6 @@ on:
   workflow_run:
     workflows: ["Build Binaries"]
     types: [completed]
-    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
@@ -29,15 +28,54 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Download artifacts from Build Binaries workflow
+    - name: Download artifacts from Build Binaries workflow (triggered by Build Binaries)
+      if: github.event_name == 'workflow_run'
       uses: dawidd6/action-download-artifact@v6
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         workflow: build.yml
-        run_id: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'release') && '' || github.event.workflow_run.id }}
+        run_id: ${{ github.event.workflow_run.id }}
         name_is_regexp: true
         name: perfecto-mcp-.*
         path: artifacts/
+
+    - name: Download artifacts from Build Binaries workflow (triggered by release/manual)
+      if: github.event_name != 'workflow_run'
+      uses: dawidd6/action-download-artifact@v6
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        workflow: build.yml
+        commit: ${{ github.sha }}
+        workflow_conclusion: success
+        name_is_regexp: true
+        name: perfecto-mcp-.*
+        path: artifacts/
+
+    - name: Get tag for version (when triggered by Build Binaries)
+      if: github.event_name == 'workflow_run'
+      id: get_tag
+      run: |
+        git fetch --tags --force 2>/dev/null || true
+        TAG=$(git tag --points-at ${{ github.event.workflow_run.head_sha }} 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+' | sort -V | tail -1)
+        echo "tag_name=$TAG" >> $GITHUB_OUTPUT
+        echo "Tag for ${{ github.event.workflow_run.head_sha }}: $TAG"
+
+    - name: Set ref tag without v (tag event processed)
+      if: github.event_name == 'release' || (github.event_name == 'workflow_run' && steps.get_tag.outputs.tag_name != '')
+      id: ref_tag
+      run: |
+        if [ "${{ github.event_name }}" = "release" ]; then
+          RAW="${{ github.event.release.tag_name }}"
+        else
+          RAW="${{ steps.get_tag.outputs.tag_name }}"
+        fi
+        VERSION="${RAW#v}"
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        MAJOR_MINOR=$(echo "$VERSION" | sed -n 's/^\([0-9]*\.[0-9]*\).*/\1/p')
+        echo "major_minor=$MAJOR_MINOR" >> $GITHUB_OUTPUT
+        MAJOR=$(echo "$VERSION" | sed -n 's/^\([0-9]*\).*/\1/p')
+        echo "major=$MAJOR" >> $GITHUB_OUTPUT
+        echo "Ref tag (no v): $VERSION ($MAJOR_MINOR, $MAJOR)"
     
     - name: Organize binaries for Docker build
       run: |
@@ -83,11 +121,12 @@ jobs:
           ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_IMAGE_NAME }}
         tags: |
           type=ref,event=branch
-          type=ref,event=pr  
-          type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
-          type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'release' }}
-          type=semver,pattern={{major}},enable=${{ github.event_name == 'release' }}
-          type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+          type=ref,event=pr
+          type=match,pattern=v(.*),group=1
+          type=raw,value=${{ steps.ref_tag.outputs.version }},enable=${{ steps.ref_tag.outputs.version != '' }}
+          type=raw,value=${{ steps.ref_tag.outputs.major_minor }},enable=${{ steps.ref_tag.outputs.major_minor != '' }}
+          type=raw,value=${{ steps.ref_tag.outputs.major }},enable=${{ steps.ref_tag.outputs.major != '' }}
+          type=raw,value=latest,enable=${{ steps.ref_tag.outputs.version != '' }}
     
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
