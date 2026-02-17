@@ -7,22 +7,6 @@
 
 The Perfecto MCP Server connects AI tools directly to Perfecto's cloud-based testing platform. This gives AI agents, assistants, and chatbots the ability to manage complete testing workflows from creation to execution and reporting. All through natural language interactions.
 
-## Use Cases
-
-- **Cross-Platform Device Testing**: Validate applications on real, virtual, and desktop devices
-
-- **Live Test Monitoring**: Track execution status and intervene in real time
-
-- **Execution History Analysis**: Review and filter past test runs for trends and troubleshooting
-
-- **Automated Test Management**: Integrate device and execution operations into CI/CD workflows
-
-- **Centralized Device Inventory**: Maintain an up-to-date catalog of available testing devices
-
-- **In-Platform Troubleshooting**: Access help content and command references directly within the platform
-
-This MCP server essentially transforms Perfecto's enterprise-grade  testing platform into an AI-accessible service, enabling intelligent automation of complex testing workflows that would typically require significant manual intervention and knowledge.
-
 ---
 
 ## Prerequisites
@@ -192,91 +176,6 @@ When using custom CA certificate bundles, you must configure both:
 
 > The `SSL_CERT_FILE` environment variable must be set to point to your custom CA certificate bundle. The `httpx` library [automatically respects the `SSL_CERT_FILE` environment variable](https://www.python-httpx.org/advanced/ssl/#working-with-ssl_cert_file-and-ssl_cert_dir) for SSL certificate verification.
 </details>
-
-
----
-
-## Available Tools
-
-The Perfecto MCP Server provides comprehensive access to Perfecto's API through four main tools:
-TODO:
-
-| Tool              | Purpose             | Key Capabilities                                                                                         |
-|-------------------|---------------------|----------------------------------------------------------------------------------------------------------|
-| **User**          | User Information    | Get current user details                                                                                 |
-| **Devices**       | Device Management   | Lists real, virtual, and browser devices required for use with RemoteWebDriver (selenium capabilities).  |
-| **Execution**     | Test Execution      | Live view of running devices (Live Stream), View reports with search capabilities (Report Library).      |
-| **AI Scriptless** | AI Scriptless Tests | List, filter and execute AI Scriptless Tests.                                                            |
-| **Help**          | Help Management     | Allows you to list or search for command capabilities and other information in the Perfecto help system. |
-
----
-
-### **User Management**
-**What it does:** Get information about your Perfecto account and default settings.
-
-| Action | What you get |
-|--------|-------------|
-| Get user info | Read current user details from Perfecto |
-
-**When to use:** Start here to get your user information.
-
----
-
-### **Device Management**
-**What it does:** Lists real, virtual, and browser devices required for use with RemoteWebDriver (selenium capabilities) .
-
-| Action | What you get                                              |
-|--------|-----------------------------------------------------------|
-| Selenium Grid Info | Retrieve main Selenium Grid details, including URLs for Selenium and Appium |
-| Real Device Listing | List all available real devices (iOS/Android, mobile/tablet) |
-| Real Device Details | Read comprehensive information for a specific real device |
-| Virtual Device Listing | List all available virtual devices (iOS Simulators, Android Emulators) |
-| Desktop Device Listing | List all available desktop browser devices |
-
-**When to use:** When you need to know what devices area available to use
-
----
-
-### **Test Execution**
-**What it does:** Live view of running devices (Live Stream), View reports with search capabilities (Report Library).
-
-| Action | What you get |
-|--------|-------------|
-| Live Execution Listing | List all ongoing executions (mobile, tablet, desktop browser) |
-| Execution Control | Stop one or more live executions by ID |
-| Execution History | List finished executions with advanced filtering (by device, OS, platform, browser, job, trigger, tag, owner, OS version, failure reason, and time frame) |
-| Report Name Listing | List all available report names for executions |
-| Filter Value Discovery | Retrieve valid filter values for execution queries (device IDs, OS, browsers, etc.) |
-
-**When to use:** When you need to see what is running or the result of completed runs.
-
----
-
-### **AI Sciptless**
-**What it does:** It allows you to have a view of all AI Scriptless test scripts and run them.
-
-| Action                 | What you get                                                                                                                                              |
-|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| List Tests             | List all AI Scriptless Tests (Public or Privates)                                                                                                         |
-| Filter Value Discovery | Retrieve valid filter values for the list of tests (Test names or Owners)                                                                                 |
-| Execution              | Execute a Test ID on a specific Device Under Test (DUT)                                                                                                   |
-
-**When to use:** When you need to see what AI Scriptless tests exist and when you need to run one of them.
-
----
-
-### **Help Management**
-**What it does:** Allows you to list or search for command capabilities and other information in the Perfecto help system.
-
-| Action | What you get                                                        |
-|--------|---------------------------------------------------------------------|
-| Help Category Listing | List all help categories and their subcategories                    |
-| Help Content Discovery | List all help topics within a category and subcategory              |
-| Help Content Reading | Retrieve detailed help content by category, subcategory, and topic  |
-| Extended Command Listing | List all supported extended RemoteWebDriver commands (Perfecto function references)  |
-| Extended Command Details | Read comprehensive information for a specific extended command  |
-
-**When to use:** When you need to know the parameters to be used in automation scripts or know details about the platform.
 
 ---
 
