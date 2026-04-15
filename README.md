@@ -36,7 +36,11 @@ The easiest way to configure your MCP client is using our interactive CLI tool:
 4. **The tool automatically generates** the JSON configuration file for you
 5. **Setup cloud name** in the JSON configuration `PERFECTO_CLOUD_NAME` with the name of your Perfecto Cloud environment. 
 
-![CLI Demo](/perfecto_demo_install.mp4)
+
+
+https://github.com/user-attachments/assets/10fffeee-b01d-4138-af7a-ea0018471730
+
+
 
 ---
 
