@@ -13,8 +13,6 @@ The Perfecto MCP Server connects AI tools directly to Perfecto's cloud-based tes
 
 - Perfecto Security Token
 - Compatible MCP host (VS Code, Claude Desktop, Cursor, Windsurf, etc.)
-- Docker (only for Docker-based deployment)
-- [uv](https://docs.astral.sh/uv/) and Python 3.11+ (only for installation from source code distribution)
 
 ## Setup
 
@@ -38,64 +36,11 @@ The easiest way to configure your MCP client is using our interactive CLI tool:
 4. **The tool automatically generates** the JSON configuration file for you
 5. **Setup cloud name** in the JSON configuration `PERFECTO_CLOUD_NAME` with the name of your Perfecto Cloud environment. 
 
-> [!IMPORTANT]
-> For macOS: You may encounter a security alert saying "Apple could not verify 'perfecto-mcp-darwin' is free of malware." To resolve this:
-> 1. Go to **System Settings** → **Privacy & Security** → **Security**
-> 2. Look for the blocked application and click **"Allow Anyway"**
-> 3. Try running the binary again
 
-![CLI Demo](/docs/cli-tool.gif)
 
----
+https://github.com/user-attachments/assets/10fffeee-b01d-4138-af7a-ea0018471730
 
-**Manual Client Configuration (Binary Installation)**
 
-1. **Download the binary** for your operating system from the [Releases](https://github.com/PerfectoCode/perfecto-mcp/releases) page
-2. **Configure your MCP client** with the following settings:
-
-```json
-{
-  "mcpServers": {
-    "Perfecto MCP": {
-      "command": "/path/to/perfecto-mcp-binary",
-      "args": ["--mcp"],
-      "env": {
-        "PERFECTO_CLOUD_NAME": "Set the cloud name value here"
-      }
-    }
-  }
-}
-```
----
-
-**Manual Client Configuration (From Remote Source Code)**
-
-1. **Prerequisites:** [uv](https://docs.astral.sh/uv/) and Python 3.11+
-2. **Configure your MCP client** with the following settings:
-
-```json
-{
-  "mcpServers": {
-    "Perfecto MCP": {
-      "command": "uvx",
-      "args": [
-        "--from", "git+https://github.com/PerfectoCode/perfecto-mcp.git@v1.0",
-        "-q", "perfecto-mcp", "--mcp"
-      ],
-      "env": {
-        "PERFECTO_CLOUD_NAME": "Set the cloud name value here"
-      }
-    }
-  }
-}
-```
-
-> [!NOTE]
-> uvx installs and runs the package and its dependencies in a temporary environment.
-> You can change to any version that has been released or any branch you want. Package support for uvx command is supported from version 1.0 onwards.
-> For more details on the uv/uvx arguments used, please refer to the official [uv documentation](https://docs.astral.sh/uv/).
-
-</details>
 
 ---
 
@@ -126,6 +71,37 @@ The easiest way to configure your MCP client is using our interactive CLI tool:
 
 > [!NOTE]
 > In order to obtain the `PERFECTO_SECURITY_TOKEN` refere to [Generate a security token](https://help.perfecto.io/perfecto-help/content/perfecto/automation-testing/generate_security_tokens.htm) page
+
+---
+
+**Manual Client Configuration (From Remote Source Code)**
+
+1. **Prerequisites:** [uv](https://docs.astral.sh/uv/) and Python 3.11+
+2. **Configure your MCP client** with the following settings:
+
+```json
+{
+  "mcpServers": {
+    "Perfecto MCP": {
+      "command": "uvx",
+      "args": [
+        "--from", "git+https://github.com/PerfectoCode/perfecto-mcp.git@v1.0",
+        "-q", "perfecto-mcp", "--mcp"
+      ],
+      "env": {
+        "PERFECTO_CLOUD_NAME": "Set the cloud name value here"
+      }
+    }
+  }
+}
+```
+
+> [!NOTE]
+> uvx installs and runs the package and its dependencies in a temporary environment.
+> You can change to any version that has been released or any branch you want. Package support for uvx command is supported from version 1.0 onwards.
+> For more details on the uv/uvx arguments used, please refer to the official [uv documentation](https://docs.astral.sh/uv/).
+
+</details>
 
 ---
 
@@ -179,9 +155,7 @@ When using custom CA certificate bundles, you must configure both:
 
 ---
 
-## License
 
-This project is licensed under the Apache License, Version 2.0. Please refer to [LICENSE](./LICENSE) for the full terms.
 
 ---
 
@@ -189,3 +163,9 @@ This project is licensed under the Apache License, Version 2.0. Please refer to 
 
 - **Issues**: [GitHub Issues](https://github.com/PerfectoCode/perfecto-mcp/issues)
 - **Support**: Contact Perfecto support for enterprise assistance
+
+---
+
+## License
+
+This project is licensed under the Apache License, Version 2.0. Please refer to [LICENSE](./LICENSE) for the full terms.
