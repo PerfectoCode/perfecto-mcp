@@ -30,7 +30,8 @@ class ExecutionManager(Manager):
             "job_number_list": "job_v2",
             "trigger_list": "triggerTypes",
             "owner_list": "owners_v2",
-            "os_version_list": "os_info_v2"
+            "os_version_list": "os_info_v2",
+            "status_list": "status",
         }
         self.metadata_in_root = [
             "failureReasons"
@@ -46,7 +47,8 @@ class ExecutionManager(Manager):
             "job_number_list": "jobNumber",
             "trigger_list": "triggerType",
             "owner_list": "owner",
-            "os_version_list": "osVersion"
+            "os_version_list": "osVersion",
+            "status_list": "status",
         }
 
     @token_verify
@@ -233,11 +235,12 @@ Actions:
         owner_list (list[str], values= use first list_filter_values tool with 'owner_list'): The list of owners to filter the execution results.
         os_version_list (list[str], values= use first list_filter_values tool with 'os_version_list'): The list of operating system versions to filter the execution results.
         failure_reason_list (list[str], values= use first list_filter_values tool with 'failure_reason_list'): The list of failure reason IDs to filter the execution results.
+        status_list (list[str], values= use first list_filter_values tool with 'status_list'): The list of status IDs to filter the execution results.
         page_index (int, default=1), The current page number. If the result mention has_next_page in true, asks the user if they want to see the next page. 
         
 - list_filter_values: List the values needed for list_report_executions filters
     args(dict): Dictionary with the following required filter parameters:
-        filter_names (list[str], values=['device_id_list', 'os_list', 'platform_list', 'browser_list', 'job_name_list', 'trigger_list', 'tag_list', 'owner_list', 'os_version_list', 'failure_reason_list']): The filter name list.
+        filter_names (list[str], values=['device_id_list', 'os_list', 'platform_list', 'browser_list', 'job_name_list', 'trigger_list', 'tag_list', 'owner_list', 'os_version_list', 'failure_reason_list', 'status_list']): The filter name list.
         
 - read_report_execution: Read report execution details (commands summary)
     args(dict): Dictionary with the following required filter parameters:
