@@ -1,100 +1,33 @@
-name: Build Binaries
+name: Commit Dist Artifacts
+
+# Publishes binaries built by "Build Binaries" back into dist/ on main.
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Build Binaries"]
+    types: [completed]
     branches: ['main']
-    tags: ['v*']
-  pull_request:
-    branches: ['main']
-  workflow_dispatch:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            name: linux
-            arch: amd64
-          - os: ubuntu-24.04-arm
-            name: linux
-            arch: arm64
-          - os: windows-latest  
-            name: windows
-            arch: amd64
-          - os: macos-latest
-            name: macos
-            arch: arm64
-          - os: macos-15-intel
-            name: macos
-            arch: amd64
-
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Build binary (Linux in Ubuntu 25.10 container)
-      if: matrix.name == 'linux'
-      shell: bash
-      run: |
-        # Docker container with Ubuntu 25.10 and build the binary inside it
-        rm -rf dist/*
-        docker run --rm \
-          -v "$PWD:/workspace" \
-          -w /workspace \
-          ubuntu:25.10 \
-          bash -c "
-            set -e
-            echo 'Setting up Ubuntu 25.10 build environment...'
-            
-            apt-get update -y
-            apt-get install -y --fix-missing curl python3 python3-pip python3-venv binutils
-            
-            # Install uv (Python package manager)
-            curl -LsSf https://astral.sh/uv/install.sh | sh
-            export PATH=\"\$HOME/.local/bin:\$PATH\"
-            
-            echo 'Building binary with uv...'
-            uv sync
-            uv run build.py
-            
-            echo 'Build completed. Checking output:'
-            ls -la dist/
-          "
-    
-    - name: Setup uv for Windows/macOS
-      if: matrix.name != 'linux'
-      uses: astral-sh/setup-uv@v4
-    
-    - name: Build binary (Windows/macOS native)
-      if: matrix.name != 'linux'
-      shell: bash
-      run: |
-        rm -rf dist/*
-        uv sync
-        uv run build.py
-    
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: perfecto-mcp-${{ matrix.name }}-${{ matrix.arch }}
-        path: dist/
-
   commit-artifacts:
-    needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event.workflow_run.conclusion == 'success'
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
+    - uses: actions/checkout@v6
+      with:
+        token: ${{ secrets.REPO_PUSH_PAT || secrets.GITHUB_TOKEN }}
+
+    - name: Download all artifacts from triggering Build Binaries run
+      uses: actions/download-artifact@v7
       with:
         path: artifacts/
-    
+        run-id: ${{ github.event.workflow_run.id }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Organize artifacts into dist/
       shell: bash
       run: |
@@ -138,7 +71,7 @@ jobs:
 
         echo "Final dist/ contents:"
         ls -la dist/ || echo "No dist/ directory found"
-    
+
     - name: Commit all artifacts to repository
       shell: bash
       run: |
@@ -151,4 +84,3 @@ jobs:
           git commit -m "[skip ci] Update all binary artifacts"
           git push
         fi
-
