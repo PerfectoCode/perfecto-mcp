@@ -2,8 +2,9 @@ name: Build Multi-Platform Docker Images
 
 on:
   workflow_run:
-    workflows: ["Build Binaries"]
+    workflows: ["Commit Dist Artifacts"]
     types: [completed]
+    branches: ['main']
   release:
     types: [published]
   workflow_dispatch:
