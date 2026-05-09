@@ -53,6 +53,7 @@ https://github.com/user-attachments/assets/10fffeee-b01d-4138-af7a-ea0018471730
       "command": "docker",
       "args": [
         "run",
+        "--pull=always",
         "--rm",
         "-i",
         "-e",
@@ -129,6 +130,7 @@ When using custom CA certificate bundles, you must configure both:
       "command": "docker",
       "args": [
         "run",
+        "--pull=always",
         "--rm",
         "-i",
         "-v",
