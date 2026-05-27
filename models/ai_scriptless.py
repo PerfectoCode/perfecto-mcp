@@ -9,7 +9,10 @@ class ScriptFlowElement(BaseModel):
     command: Optional[str] = Field(description="Command namespace", default=None)
     subcommand: Optional[str] = Field(description="Command subcommand", default=None)
     active: bool = Field(description="Whether the step is enabled (not excluded)", default=True)
-    uuid: Optional[str] = Field(description="Stable step identifier when present", default=None)
+    step_path: Optional[str] = Field(
+        description="Dot-separated positional path (e.g. 0, 2.0, 5.b0.1); derived from tree position",
+        default=None,
+    )
     children: List["ScriptFlowElement"] = Field(description="Nested flow elements", default_factory=list)
 
 
@@ -23,7 +26,6 @@ class ScriptVariableSummary(BaseModel):
     type: str = Field(description="Variable type (string, number, boolean, secured_string, etc.)")
     value: Optional[Any] = Field(description="Variable value when readable", default=None)
     secured: bool = Field(description="Whether the value is secured", default=False)
-    uuid: Optional[str] = Field(description="Stable variable identifier when present", default=None)
     set_at_runtime: bool = Field(description="True when value is provided at execution time", default=False)
 
 

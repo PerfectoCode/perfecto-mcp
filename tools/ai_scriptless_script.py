@@ -1,6 +1,8 @@
+import asyncio
 import copy
 import json
-import uuid
+import re
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -103,6 +105,37 @@ def _make_argument(name: str, value: Any, data_source: str = "CONSTANT") -> dict
     return {"@type": "FunctionArgument", "name": name, "data": data}
 
 
+ARGUMENT_NAME_ALIASES: dict[str, dict[str, str]] = {
+    "wait": {"waitDuration": "duration"},
+}
+
+
+def command_id_from_element(element: dict[str, Any]) -> str:
+    command = element.get("command", "")
+    subcommand = element.get("subcommand") or ""
+    if subcommand:
+        return f"{command}_{subcommand}"
+    return command
+
+
+def _normalize_argument_names(command_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    aliases = ARGUMENT_NAME_ALIASES.get(command_id, {})
+    normalized: dict[str, Any] = {}
+    for name, value in arguments.items():
+        canonical = aliases.get(name, name)
+        normalized[canonical] = value
+    return normalized
+
+
+def _drop_superseded_argument_aliases(
+        command_id: str,
+        arguments: dict[str, tuple[str, Any]],
+) -> None:
+    for alias, canonical in ARGUMENT_NAME_ALIASES.get(command_id, {}).items():
+        if alias != canonical and canonical in arguments:
+            arguments.pop(alias, None)
+
+
 def _default_arguments(command_id: str) -> dict[str, tuple[str, Any]]:
     defaults: dict[str, dict[str, tuple[str, Any]]] = {
         "ai_user-action": {
@@ -121,7 +154,7 @@ def _default_arguments(command_id: str) -> dict[str, tuple[str, Any]]:
             "text": ("CONSTANT", ""),
         },
         "wait": {
-            "waitDuration": ("CONSTANT", "1"),
+            "duration": ("CONSTANT", "1"),
         },
         "handset_ready": {
             "handsetId": ("VARIABLE", "DUT"),
@@ -142,11 +175,12 @@ def _default_arguments(command_id: str) -> dict[str, tuple[str, Any]]:
 def build_arguments(command_id: str, arguments: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: dict[str, tuple[str, Any]] = _default_arguments(command_id)
     if arguments:
-        for name, value in arguments.items():
+        for name, value in _normalize_argument_names(command_id, arguments).items():
             if isinstance(value, dict) and "data_source" in value:
                 merged[name] = (value["data_source"], value.get("value"))
             else:
                 merged[name] = ("CONSTANT", value)
+    _drop_superseded_argument_aliases(command_id, merged)
     return [_make_argument(name, value, source) for name, (source, value) in merged.items()]
 
 
@@ -163,11 +197,14 @@ def build_flow_element(command_id: str, arguments: Optional[dict[str, Any]] = No
         "comment": None,
         "status": None,
         "active": True,
-        "uuid": str(uuid.uuid4()),
     }
 
 
 CONTAINER_TYPES = frozenset({"LogicalStep", "Loop", "Branch"})
+
+# Dot-separated positional paths (no spaces). Examples: 0, 2.0, 5.b0, 5.b0.1
+# Segments are either a 0-based index (0, 1, 2) or a branch marker (b0=Then, b1=Else).
+STEP_PATH_PATTERN = re.compile(r"^(?:\d+|b\d+)(?:\.(?:\d+|b\d+))*$")
 
 VARIABLE_TYPE_ALIASES = {
     "string": "StringData",
@@ -240,7 +277,6 @@ def build_variable_entry(
 ) -> dict[str, Any]:
     return {
         "@type": "Parameter" if set_at_runtime else "Variable",
-        "uuid": str(uuid.uuid4()),
         "data": build_variable_data(variable_type, name, value),
     }
 
@@ -332,7 +368,6 @@ def build_branch(clause: str) -> dict[str, Any]:
         "active": True,
         "comment": None,
         "status": None,
-        "uuid": str(uuid.uuid4()),
     }
 
 
@@ -344,7 +379,6 @@ def build_logical_step(label: Optional[str] = None) -> dict[str, Any]:
         "label": label or "",
         "comment": None,
         "status": None,
-        "uuid": str(uuid.uuid4()),
     }
 
 
@@ -356,7 +390,6 @@ def build_loop(count: int = 1) -> dict[str, Any]:
         "active": True,
         "comment": None,
         "status": None,
-        "uuid": str(uuid.uuid4()),
     }
 
 
@@ -373,11 +406,107 @@ def build_if_statement(expression: Optional[str] = None, label: Optional[str] = 
         "comment": None,
         "status": None,
         "active": True,
-        "uuid": str(uuid.uuid4()),
     }
     if expression:
         statement["expression"] = expression
     return statement
+
+
+def validate_step_path(step_path: str) -> None:
+    if not step_path or step_path.strip() != step_path or " " in step_path:
+        raise ValueError(
+            "step_path must be a dot-separated positional path without spaces "
+            "(e.g. 0, 2.0, 5.b0, 5.b0.1)"
+        )
+    if not STEP_PATH_PATTERN.match(step_path):
+        raise ValueError(
+            f"invalid step_path: {step_path!r}. Use dot-separated indices, e.g. 0, 2.0, 5.b0.1"
+        )
+
+
+def find_step_path_for_element(script: dict[str, Any], target: dict[str, Any]) -> Optional[str]:
+    def walk(flow_elements: list[dict[str, Any]], prefix: str) -> Optional[str]:
+        for index, element in enumerate(flow_elements):
+            step_path = f"{prefix}{index}"
+            if element is target:
+                return step_path
+            nested = walk(element.get("flowElements", []), f"{step_path}.")
+            if nested:
+                return nested
+            if element.get("@type") == "IfStatement":
+                for branch_index, branch in enumerate(element.get("branches", [])):
+                    branch_path = f"{step_path}.b{branch_index}"
+                    if branch is target:
+                        return branch_path
+                    nested = walk(branch.get("flowElements", []), f"{branch_path}.")
+                    if nested:
+                        return nested
+        return None
+
+    return walk(script.get("flowElements", []), "")
+
+
+def find_element_by_path(
+        script: dict[str, Any],
+        step_path: str,
+) -> Optional[tuple[list[dict[str, Any]], int, dict[str, Any]]]:
+    validate_step_path(step_path)
+    parts = step_path.split(".")
+    current_list = script.get("flowElements", [])
+    current_element: Optional[dict[str, Any]] = None
+
+    for part_index, part in enumerate(parts):
+        if part.startswith("b"):
+            if current_element is None or current_element.get("@type") != "IfStatement":
+                return None
+            branch_index = int(part[1:])
+            branches = current_element.get("branches", [])
+            if branch_index >= len(branches):
+                return None
+            current_element = branches[branch_index]
+            current_list = current_element.get("flowElements", [])
+            continue
+
+        index = int(part)
+        if index >= len(current_list):
+            return None
+        current_element = current_list[index]
+        if part_index < len(parts) - 1:
+            next_part = parts[part_index + 1]
+            if not next_part.startswith("b"):
+                current_list = current_element.get("flowElements", [])
+
+    if current_element is None:
+        return None
+    for elements, index, element in _iter_element_locations(script.get("flowElements", [])):
+        if element is current_element:
+            return elements, index, element
+    return None
+
+
+def find_container_by_path(script: dict[str, Any], step_path: str) -> Optional[dict[str, Any]]:
+    located = find_element_by_path(script, step_path)
+    if located is None:
+        return None
+    _, _, element = located
+    return element
+
+
+def strip_non_api_script_fields(script: dict[str, Any]) -> None:
+    def walk_element(element: dict[str, Any]) -> None:
+        element.pop("uuid", None)
+        for child in element.get("flowElements", []):
+            walk_element(child)
+        if element.get("@type") == "IfStatement":
+            for branch in element.get("branches", []):
+                walk_element(branch)
+            for clause_key in ("thenClause", "elseClause"):
+                clause = element.get(clause_key)
+                if clause:
+                    walk_element(clause)
+
+    for element in script.get("flowElements", []):
+        walk_element(element)
 
 
 def new_empty_script() -> dict[str, Any]:
@@ -385,7 +514,6 @@ def new_empty_script() -> dict[str, Any]:
         "@type": "Script",
         "parameters": [{
             "@type": "Parameter",
-            "name": "DUT",
             "data": {
                 "@type": "HandsetData",
                 "key": None,
@@ -404,53 +532,17 @@ def new_empty_script() -> dict[str, Any]:
     }
 
 
-def assign_uuids(element: dict[str, Any]) -> None:
-    if element.get("uuid") is None:
-        element["uuid"] = str(uuid.uuid4())
-    for child in element.get("flowElements", []):
-        assign_uuids(child)
-    if element.get("@type") == "IfStatement":
-        for branch in element.get("branches", []):
-            assign_uuids(branch)
-            for child in branch.get("flowElements", []):
-                assign_uuids(child)
-        for clause_key in ("thenClause", "elseClause"):
-            clause = element.get(clause_key)
-            if clause:
-                assign_uuids(clause)
-                for child in clause.get("flowElements", []):
-                    assign_uuids(child)
-
-
-def assign_uuids_to_script(script: dict[str, Any]) -> None:
-    for element in script.get("flowElements", []):
-        assign_uuids(element)
-
-
 def _iter_element_locations(flow_elements: list[dict[str, Any]]):
     for index, element in enumerate(flow_elements):
         yield flow_elements, index, element
         for child_list, child_index, child in _iter_element_locations(element.get("flowElements", [])):
             yield child_list, child_index, child
         if element.get("@type") == "IfStatement":
-            for branch in element.get("branches", []):
+            branches = element.get("branches", [])
+            for branch_index, branch in enumerate(branches):
+                yield branches, branch_index, branch
                 for child_list, child_index, child in _iter_element_locations(branch.get("flowElements", [])):
                     yield child_list, child_index, child
-
-
-def find_element_by_uuid(script: dict[str, Any], step_uuid: str) -> Optional[tuple[list[dict[str, Any]], int, dict[str, Any]]]:
-    for elements, index, element in _iter_element_locations(script.get("flowElements", [])):
-        if element.get("uuid") == step_uuid:
-            return elements, index, element
-    return None
-
-
-def find_container_by_uuid(script: dict[str, Any], step_uuid: str) -> Optional[dict[str, Any]]:
-    located = find_element_by_uuid(script, step_uuid)
-    if located:
-        _, _, element = located
-        return element
-    return None
 
 
 def update_flow_element_counts(script: dict[str, Any]) -> None:
@@ -460,23 +552,25 @@ def update_flow_element_counts(script: dict[str, Any]) -> None:
 def insert_flow_element(
         script: dict[str, Any],
         element: dict[str, Any],
-        after_uuid: Optional[str] = None,
-        parent_uuid: Optional[str] = None,
+        after_path: Optional[str] = None,
+        parent_path: Optional[str] = None,
 ) -> None:
-    if parent_uuid:
-        parent = find_container_by_uuid(script, parent_uuid)
+    if parent_path:
+        parent = find_container_by_path(script, parent_path)
         if parent is None:
-            raise ValueError(f"parent_uuid not found: {parent_uuid}")
+            raise ValueError(f"parent_path not found: {parent_path}")
         if parent.get("@type") not in CONTAINER_TYPES:
-            raise ValueError(f"parent_uuid must reference a container (LogicalStep, Loop, Branch): {parent_uuid}")
+            raise ValueError(
+                f"parent_path must reference a container (LogicalStep, Loop, Branch): {parent_path}"
+            )
         parent.setdefault("flowElements", []).append(element)
         return
 
     flow_elements = script.setdefault("flowElements", [])
-    if after_uuid:
-        located = find_element_by_uuid(script, after_uuid)
+    if after_path:
+        located = find_element_by_path(script, after_path)
         if located is None:
-            raise ValueError(f"after_uuid not found: {after_uuid}")
+            raise ValueError(f"after_path not found: {after_path}")
         elements, index, _ = located
         elements.insert(index + 1, element)
     else:
@@ -485,8 +579,9 @@ def insert_flow_element(
 
 
 def update_element_arguments(element: dict[str, Any], arguments: dict[str, Any]) -> None:
+    command_id = command_id_from_element(element)
     existing = {argument["name"]: argument for argument in element.get("arguments", [])}
-    for name, value in arguments.items():
+    for name, value in _normalize_argument_names(command_id, arguments).items():
         if isinstance(value, dict) and "data_source" in value:
             source = value["data_source"]
             argument_value = value.get("value")
@@ -494,59 +589,64 @@ def update_element_arguments(element: dict[str, Any], arguments: dict[str, Any])
             source = "CONSTANT"
             argument_value = value
         existing[name] = _make_argument(name, argument_value, source)
+    for alias, canonical in ARGUMENT_NAME_ALIASES.get(command_id, {}).items():
+        if alias != canonical and canonical in existing:
+            existing.pop(alias, None)
     element["arguments"] = list(existing.values())
 
 
-def delete_element_by_uuid(script: dict[str, Any], step_uuid: str) -> None:
-    located = find_element_by_uuid(script, step_uuid)
+def delete_element_by_path(script: dict[str, Any], step_path: str) -> None:
+    located = find_element_by_path(script, step_path)
     if located is None:
-        raise ValueError(f"uuid not found: {step_uuid}")
+        raise ValueError(f"step_path not found: {step_path}")
     elements, index, _ = located
     elements.pop(index)
     update_flow_element_counts(script)
 
 
-def set_element_enabled(script: dict[str, Any], step_uuid: str, enabled: bool) -> None:
-    located = find_element_by_uuid(script, step_uuid)
+def set_element_enabled(script: dict[str, Any], step_path: str, enabled: bool) -> None:
+    located = find_element_by_path(script, step_path)
     if located is None:
-        raise ValueError(f"uuid not found: {step_uuid}")
+        raise ValueError(f"step_path not found: {step_path}")
     _, _, element = located
     element["active"] = enabled
 
 
-def set_condition_expression(script: dict[str, Any], step_uuid: str, expression: str) -> None:
-    located = find_element_by_uuid(script, step_uuid)
+def set_condition_expression(script: dict[str, Any], step_path: str, expression: str) -> None:
+    located = find_element_by_path(script, step_path)
     if located is None:
-        raise ValueError(f"uuid not found: {step_uuid}")
+        raise ValueError(f"step_path not found: {step_path}")
     _, _, element = located
     if element.get("@type") != "IfStatement":
-        raise ValueError(f"step_uuid must reference an IfStatement: {step_uuid}")
+        raise ValueError(f"step_path must reference an IfStatement: {step_path}")
     element["expression"] = expression
 
 
-def move_element_by_uuid(
+def move_element_by_path(
         script: dict[str, Any],
-        step_uuid: str,
-        after_uuid: Optional[str] = None,
-        parent_uuid: Optional[str] = None,
+        step_path: str,
+        after_path: Optional[str] = None,
+        parent_path: Optional[str] = None,
 ) -> None:
-    located = find_element_by_uuid(script, step_uuid)
+    located = find_element_by_path(script, step_path)
     if located is None:
-        raise ValueError(f"uuid not found: {step_uuid}")
+        raise ValueError(f"step_path not found: {step_path}")
     source_list, source_index, element = located
     source_list.pop(source_index)
 
-    if parent_uuid:
-        parent = find_container_by_uuid(script, parent_uuid)
+    if parent_path:
+        parent = find_container_by_path(script, parent_path)
         if parent is None:
-            raise ValueError(f"parent_uuid not found: {parent_uuid}")
+            raise ValueError(f"parent_path not found: {parent_path}")
         if parent.get("@type") not in CONTAINER_TYPES:
-            raise ValueError(f"parent_uuid must reference a container (LogicalStep, Loop, Branch): {parent_uuid}")
+            raise ValueError(
+                f"parent_path must reference a container (LogicalStep, Loop, Branch): {parent_path}"
+            )
         parent.setdefault("flowElements", []).append(element)
-    elif after_uuid:
-        target = find_element_by_uuid(script, after_uuid)
+    elif after_path:
+        target = find_element_by_path(script, after_path)
         if target is None:
-            raise ValueError(f"after_uuid not found: {after_uuid}")
+            raise ValueError(f"after_path not found: {after_path}")
         target_list, target_index, _ = target
         if target_list is source_list and source_index < target_index:
             target_index -= 1
@@ -570,7 +670,27 @@ async def fetch_current_username(token: PerfectoToken) -> Optional[str]:
     return result.result.get("username") or result.result.get("userId")
 
 
-async def persist_script(
+_script_write_locks: dict[str, asyncio.Lock] = {}
+_script_write_locks_guard = asyncio.Lock()
+
+
+async def _get_script_write_lock(item_key: str) -> asyncio.Lock:
+    async with _script_write_locks_guard:
+        lock = _script_write_locks.get(item_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _script_write_locks[item_key] = lock
+        return lock
+
+
+@asynccontextmanager
+async def script_write_lock(item_key: str):
+    lock = await _get_script_write_lock(item_key)
+    async with lock:
+        yield
+
+
+async def _persist_script(
         token: PerfectoToken,
         item_key: str,
         script: dict[str, Any],
@@ -579,8 +699,8 @@ async def persist_script(
 ) -> BaseResult:
     working_script = copy.deepcopy(script)
     baseline_script = copy.deepcopy(saved_script or script)
-    assign_uuids_to_script(working_script)
-    assign_uuids_to_script(baseline_script)
+    strip_non_api_script_fields(working_script)
+    strip_non_api_script_fields(baseline_script)
     update_flow_element_counts(working_script)
 
     draft_url = perfecto.get_ai_scriptless_draft_api_url(token.cloud_name)
@@ -644,19 +764,44 @@ async def persist_script(
     return BaseResult(result=result)
 
 
+async def persist_script(
+        token: PerfectoToken,
+        item_key: str,
+        script: dict[str, Any],
+        saved_script: Optional[dict[str, Any]] = None,
+        snapshot_comment: Optional[str] = None,
+) -> BaseResult:
+    async with script_write_lock(item_key):
+        return await _persist_script(
+            token,
+            item_key,
+            script,
+            saved_script,
+            snapshot_comment,
+        )
+
+
 async def load_and_mutate(
         token: PerfectoToken,
         test_id: str,
         mutator,
+        snapshot_comment: Optional[str] = None,
 ) -> BaseResult:
-    payload_result = await fetch_script_payload(token, test_id)
-    if payload_result.error:
-        return payload_result
-    payload = payload_result.result
-    script = copy.deepcopy(payload.get("script", {}))
-    saved_script = copy.deepcopy(payload.get("script", {}))
-    try:
-        mutator(script)
-    except ValueError as exc:
-        return BaseResult(error=str(exc))
-    return await persist_script(token, test_id, script, saved_script)
+    async with script_write_lock(test_id):
+        payload_result = await fetch_script_payload(token, test_id)
+        if payload_result.error:
+            return payload_result
+        payload = payload_result.result
+        script = copy.deepcopy(payload.get("script", {}))
+        saved_script = copy.deepcopy(payload.get("script", {}))
+        try:
+            mutator(script)
+        except ValueError as exc:
+            return BaseResult(error=str(exc))
+        return await _persist_script(
+            token,
+            test_id,
+            script,
+            saved_script,
+            snapshot_comment,
+        )

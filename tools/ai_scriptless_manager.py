@@ -26,16 +26,18 @@ from tools.ai_scriptless_script import (
     build_move_test_body,
     build_snapshot_search_body,
     delete_script_variable,
-    delete_element_by_uuid,
+    delete_element_by_path,
     fetch_current_username,
     fetch_script_payload,
-    find_element_by_uuid,
+    find_element_by_path,
+    find_step_path_for_element,
     insert_flow_element,
     load_and_mutate,
     modify_script_variable,
-    move_element_by_uuid,
+    move_element_by_path,
     new_empty_script,
     persist_script,
+    script_write_lock,
     set_condition_expression,
     set_element_enabled,
     split_item_key,
@@ -43,6 +45,22 @@ from tools.ai_scriptless_script import (
     update_element_arguments,
 )
 from tools.utils import api_request
+
+STEP_PATH_REFRESH_NOTES = [
+    "step_path values are dot-separated positional paths (e.g. 0, 2.0, 5.b0.1); Perfecto does not persist them.",
+    "After this operation, step paths may have changed. Call view_test_structure before the next edit; "
+    "do not reuse step_path values from this response.",
+]
+
+
+def _append_step_path_refresh_notes(result: BaseResult) -> BaseResult:
+    if result.error or not isinstance(result.result, dict):
+        return result
+    notes = result.result.setdefault("notes", [])
+    for note in STEP_PATH_REFRESH_NOTES:
+        if note not in notes:
+            notes.append(note)
+    return result
 
 
 class AiScriptlessManager(Manager):
@@ -207,8 +225,8 @@ class AiScriptlessManager(Manager):
             test_id: str,
             command_id: str,
             arguments: Optional[dict[str, Any]] = None,
-            after_uuid: Optional[str] = None,
-            parent_uuid: Optional[str] = None,
+            after_path: Optional[str] = None,
+            parent_path: Optional[str] = None,
     ) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
@@ -216,73 +234,84 @@ class AiScriptlessManager(Manager):
             return BaseResult(error="command_id is required (from list_commands)")
 
         element = build_flow_element(command_id, arguments)
+        inserted_path: dict[str, Optional[str]] = {"step_path": None}
 
         def mutator(script: dict[str, Any]) -> None:
-            insert_flow_element(script, element, after_uuid=after_uuid, parent_uuid=parent_uuid)
+            insert_flow_element(script, element, after_path=after_path, parent_path=parent_path)
+            inserted_path["step_path"] = find_step_path_for_element(script, element)
 
         result = await load_and_mutate(self.token, test_id, mutator)
         if result.error:
             return result
-        result.result["uuid"] = element["uuid"]
+        result.result["step_path"] = inserted_path["step_path"]
         result.result["command_id"] = command_id
-        return result
+        return _append_step_path_refresh_notes(result)
 
     @token_verify
-    async def modify_command(self, test_id: str, step_uuid: str, arguments: dict[str, Any]) -> BaseResult:
+    async def modify_command(self, test_id: str, step_path: str, arguments: dict[str, Any]) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
-        if not step_uuid:
-            return BaseResult(error="step_uuid is required (from view_test_structure)")
+        if not step_path:
+            return BaseResult(error="step_path is required (from view_test_structure)")
         if not arguments:
             return BaseResult(error="arguments is required")
 
         def mutator(script: dict[str, Any]) -> None:
-            located = find_element_by_uuid(script, step_uuid)
+            located = find_element_by_path(script, step_path)
             if located is None:
-                raise ValueError(f"step_uuid not found: {step_uuid}")
+                raise ValueError(f"step_path not found: {step_path}")
             _, _, element = located
             update_element_arguments(element, arguments)
 
-        return await load_and_mutate(self.token, test_id, mutator)
+        return _append_step_path_refresh_notes(
+            await load_and_mutate(self.token, test_id, mutator)
+        )
 
     @token_verify
-    async def delete_command(self, test_id: str, step_uuid: str) -> BaseResult:
+    async def delete_command(self, test_id: str, step_path: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
-        if not step_uuid:
-            return BaseResult(error="step_uuid is required (from view_test_structure)")
+        if not step_path:
+            return BaseResult(error="step_path is required (from view_test_structure)")
 
         def mutator(script: dict[str, Any]) -> None:
-            delete_element_by_uuid(script, step_uuid)
+            delete_element_by_path(script, step_path)
 
-        return await load_and_mutate(self.token, test_id, mutator)
+        return _append_step_path_refresh_notes(
+            await load_and_mutate(self.token, test_id, mutator)
+        )
 
     @token_verify
-    async def set_command_enabled(self, test_id: str, step_uuid: str, enabled: bool) -> BaseResult:
+    async def set_command_enabled(self, test_id: str, step_path: str, enabled: bool) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
-        if not step_uuid:
-            return BaseResult(error="step_uuid is required (from view_test_structure)")
+        if not step_path:
+            return BaseResult(error="step_path is required (from view_test_structure)")
 
         def mutator(script: dict[str, Any]) -> None:
-            set_element_enabled(script, step_uuid, enabled)
+            set_element_enabled(script, step_path, enabled)
 
         result = await load_and_mutate(self.token, test_id, mutator)
         if result.error:
             return result
-        result.result["uuid"] = step_uuid
+        result.result["step_path"] = step_path
         result.result["active"] = enabled
-        return result
+        return _append_step_path_refresh_notes(result)
 
     @token_verify
     async def save_test(self, test_id: str, comment: Optional[str] = None) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
-        payload_result = await fetch_script_payload(self.token, test_id)
-        if payload_result.error:
-            return payload_result
-        script = payload_result.result.get("script", {})
-        return await persist_script(self.token, test_id, script, snapshot_comment=comment)
+
+        def mutator(_script: dict[str, Any]) -> None:
+            pass
+
+        return await load_and_mutate(
+            self.token,
+            test_id,
+            mutator,
+            snapshot_comment=comment,
+        )
 
     @token_verify
     async def create_test(self, name: str, folder: str = "My Folder", visibility: str = "PRIVATE") -> BaseResult:
@@ -305,58 +334,64 @@ class AiScriptlessManager(Manager):
             return BaseResult(error="test_id is required")
         if not name:
             return BaseResult(error="name is required")
-        payload_result = await fetch_script_payload(self.token, test_id)
-        if payload_result.error:
-            return payload_result
-        script = payload_result.result.get("script", {})
+        async with script_write_lock(test_id):
+            payload_result = await fetch_script_payload(self.token, test_id)
+            if payload_result.error:
+                return payload_result
+            script = payload_result.result.get("script", {})
         item_key = build_item_key(visibility, folder, name)
-        return await persist_script(self.token, item_key, script, snapshot_comment=comment)
+        return _append_step_path_refresh_notes(
+            await persist_script(self.token, item_key, script, snapshot_comment=comment)
+        )
 
     async def _add_structure(
             self,
             test_id: str,
             element: dict[str, Any],
             structure_type: str,
-            after_uuid: Optional[str] = None,
-            parent_uuid: Optional[str] = None,
+            after_path: Optional[str] = None,
+            parent_path: Optional[str] = None,
     ) -> BaseResult:
+        inserted_path: dict[str, Optional[str]] = {"step_path": None}
+
         def mutator(script: dict[str, Any]) -> None:
-            insert_flow_element(script, element, after_uuid=after_uuid, parent_uuid=parent_uuid)
+            insert_flow_element(script, element, after_path=after_path, parent_path=parent_path)
+            inserted_path["step_path"] = find_step_path_for_element(script, element)
 
         result = await load_and_mutate(self.token, test_id, mutator)
         if result.error:
             return result
-        result.result["uuid"] = element["uuid"]
+        result.result["step_path"] = inserted_path["step_path"]
         result.result["structure_type"] = structure_type
-        return result
+        return _append_step_path_refresh_notes(result)
 
     @token_verify
     async def add_logical_step(
             self,
             test_id: str,
             label: Optional[str] = None,
-            after_uuid: Optional[str] = None,
-            parent_uuid: Optional[str] = None,
+            after_path: Optional[str] = None,
+            parent_path: Optional[str] = None,
     ) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
         element = build_logical_step(label)
-        return await self._add_structure(test_id, element, "LogicalStep", after_uuid, parent_uuid)
+        return await self._add_structure(test_id, element, "LogicalStep", after_path, parent_path)
 
     @token_verify
     async def add_loop(
             self,
             test_id: str,
             count: int = 1,
-            after_uuid: Optional[str] = None,
-            parent_uuid: Optional[str] = None,
+            after_path: Optional[str] = None,
+            parent_path: Optional[str] = None,
     ) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
         if count < 1:
             return BaseResult(error="count must be at least 1")
         element = build_loop(count)
-        result = await self._add_structure(test_id, element, "Loop", after_uuid, parent_uuid)
+        result = await self._add_structure(test_id, element, "Loop", after_path, parent_path)
         if not result.error:
             result.result["count"] = count
         return result
@@ -367,59 +402,59 @@ class AiScriptlessManager(Manager):
             test_id: str,
             expression: Optional[str] = None,
             label: Optional[str] = None,
-            after_uuid: Optional[str] = None,
-            parent_uuid: Optional[str] = None,
+            after_path: Optional[str] = None,
+            parent_path: Optional[str] = None,
     ) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
         element = build_if_statement(expression, label)
-        result = await self._add_structure(test_id, element, "IfStatement", after_uuid, parent_uuid)
+        result = await self._add_structure(test_id, element, "IfStatement", after_path, parent_path)
         if not result.error and expression:
             result.result["expression"] = expression
         return result
 
     @token_verify
-    async def set_condition_expression(self, test_id: str, step_uuid: str, expression: str) -> BaseResult:
+    async def set_condition_expression(self, test_id: str, step_path: str, expression: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
-        if not step_uuid:
-            return BaseResult(error="step_uuid is required (IfStatement uuid from view_test_structure)")
+        if not step_path:
+            return BaseResult(error="step_path is required (IfStatement path from view_test_structure)")
         if not expression:
             return BaseResult(error="expression is required")
 
         def mutator(script: dict[str, Any]) -> None:
-            set_condition_expression(script, step_uuid, expression)
+            set_condition_expression(script, step_path, expression)
 
         result = await load_and_mutate(self.token, test_id, mutator)
         if result.error:
             return result
-        result.result["uuid"] = step_uuid
+        result.result["step_path"] = step_path
         result.result["expression"] = expression
-        return result
+        return _append_step_path_refresh_notes(result)
 
     @token_verify
     async def move_command(
             self,
             test_id: str,
-            step_uuid: str,
-            after_uuid: Optional[str] = None,
-            parent_uuid: Optional[str] = None,
+            step_path: str,
+            after_path: Optional[str] = None,
+            parent_path: Optional[str] = None,
     ) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
-        if not step_uuid:
-            return BaseResult(error="step_uuid is required")
-        if not after_uuid and not parent_uuid:
-            return BaseResult(error="after_uuid or parent_uuid is required")
+        if not step_path:
+            return BaseResult(error="step_path is required")
+        if not after_path and not parent_path:
+            return BaseResult(error="after_path or parent_path is required")
 
         def mutator(script: dict[str, Any]) -> None:
-            move_element_by_uuid(script, step_uuid, after_uuid=after_uuid, parent_uuid=parent_uuid)
+            move_element_by_path(script, step_path, after_path=after_path, parent_path=parent_path)
 
         result = await load_and_mutate(self.token, test_id, mutator)
         if result.error:
             return result
-        result.result["uuid"] = step_uuid
-        return result
+        result.result["step_path"] = step_path
+        return _append_step_path_refresh_notes(result)
 
     @token_verify
     async def delete_test(self, test_id: str) -> BaseResult:
@@ -608,7 +643,7 @@ Actions:
             When device_type='virtual': {platform_name: str, manufacturer: str, model: str, platform_version: str} (Get from list_virtual_devices).
             When device_type='desktop': {platform_name: str, platform_version: str, browser_name: str, 
                           browser_version: str, resolution: str, location: str} (Get from list_desktop_devices).
-- view_test_structure: View the hierarchical structure of an AI Scriptless test.
+- view_test_structure: View the hierarchical structure of an AI Scriptless test. Each step has step_path (dot-separated positional path, e.g. 0, 2.0, 5.b0.1).
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests (e.g. PRIVATE:My Folder/My Test.xml).
 - list_commands: List available AI Scriptless commands from the command repository.
@@ -622,23 +657,23 @@ Actions:
         test_id (str, required): Test itemKey from list_tests.
         command_id (str, required): Command ID from list_commands.
         arguments (dict, optional): Command argument names to values.
-        after_uuid (str, optional): Insert after this step uuid.
-        parent_uuid (str, optional): Insert inside a LogicalStep, Loop, or Branch container.
+        after_path (str, optional): Insert after this step (step_path from view_test_structure).
+        parent_path (str, optional): Insert inside a container (step_path of LogicalStep, Loop, or Branch).
 - modify_command: Update command arguments and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
-        step_uuid (str): Step uuid from view_test_structure.
+        step_path (str): Step path from view_test_structure (e.g. 0, 2.0, 5.b0.1).
         arguments (dict): Argument names to new values.
 - delete_command: Remove a command from a test and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
-        step_uuid (str): Step uuid from view_test_structure.
+        step_path (str): Step path from view_test_structure.
 - set_command_enabled: Enable or disable (exclude/include) a command and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
-        step_uuid (str): Step uuid from view_test_structure.
+        step_path (str): Step path from view_test_structure.
         enabled (bool): True to include, false to exclude.
-- save_test: Persist the current test script (assigns uuids if missing).
+- save_test: Persist the current test script.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
         comment (str, optional): Labels the current version on '<current>' in list_snapshots (UI: Save with comment). Every save also adds a UUID history entry.
@@ -658,32 +693,32 @@ Actions:
     args(dict): Dictionary with the following parameters:
         test_id (str, required): Test itemKey from list_tests.
         label (str, optional): Group label.
-        after_uuid (str, optional): Insert after this step uuid.
-        parent_uuid (str, optional): Insert inside a LogicalStep, Loop, or Branch container.
+        after_path (str, optional): Insert after this step path.
+        parent_path (str, optional): Insert inside a container step path.
 - add_loop: Add a Loop container and persist.
     args(dict): Dictionary with the following parameters:
         test_id (str, required): Test itemKey from list_tests.
         count (int, default=1): RepeatIterator count.
-        after_uuid (str, optional): Insert after this step uuid.
-        parent_uuid (str, optional): Insert inside a LogicalStep, Loop, or Branch container.
+        after_path (str, optional): Insert after this step path.
+        parent_path (str, optional): Insert inside a container step path.
 - add_condition: Add an IfStatement condition with Then/Else branches and persist.
     args(dict): Dictionary with the following parameters:
         test_id (str, required): Test itemKey from list_tests.
         expression (str, optional): Condition expression.
         label (str, optional): Condition label.
-        after_uuid (str, optional): Insert after this step uuid.
-        parent_uuid (str, optional): Insert inside a LogicalStep, Loop, or Branch container.
+        after_path (str, optional): Insert after this step path.
+        parent_path (str, optional): Insert inside a container step path.
 - set_condition_expression: Set the expression on an IfStatement and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
-        step_uuid (str): IfStatement uuid from view_test_structure.
+        step_path (str): IfStatement path from view_test_structure (e.g. 5).
         expression (str): Condition expression.
 - move_command: Move a step to a new position and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
-        step_uuid (str): Step uuid to move.
-        after_uuid (str, optional): Insert after this sibling uuid.
-        parent_uuid (str, optional): Move into this container uuid (LogicalStep, Loop, or Branch).
+        step_path (str): Step path to move.
+        after_path (str, optional): Insert after this sibling step path.
+        parent_path (str, optional): Move into this container step path (LogicalStep, Loop, or Branch).
 - delete_test: Delete an AI Scriptless test from the repository.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
@@ -721,9 +756,9 @@ Actions:
         test_id (str): Test itemKey from list_tests.
         name (str): Variable name to delete.
 Hints:
-- Before editing a test, call view_test_structure to get step uuids and the current hierarchy.
+- step_path is a dot-separated positional path without spaces (0-based indices; b0=Then branch, b1=Else). Example: root step 3 is "3"; first step inside Then of condition at 5 is "5.b0.0". Perfecto does not persist paths; they change when steps are inserted, moved, or deleted. Always call view_test_structure before the next structure edit; do not reuse step_path from a previous mutation response.
 - Use list_commands and get_command_definitions before add_command to discover valid command_ids and argument names.
-- Use parent_uuid on add_command to insert commands inside LogicalStep, Loop, or Branch containers.
+- Use parent_path on add_command with the step_path of a LogicalStep, Loop, or Branch from view_test_structure.
 - Use add_logical_step, add_loop, and add_condition to build control-flow structures matching the UI toolbar Group, Loop, and Condition actions.
 - Script variables (list_test_variables, add/modify/delete_test_variable) are stored in script.variables[] and are distinct from the DUT parameter in script.parameters[].
 - Snapshot behavior: every save creates a UUID history entry; comment on save_test labels '<current>'. See list_snapshots notes for details.
@@ -774,24 +809,24 @@ Hints:
                         args.get("test_id", ""),
                         args.get("command_id", ""),
                         args.get("arguments"),
-                        args.get("after_uuid"),
-                        args.get("parent_uuid"),
+                        args.get("after_path"),
+                        args.get("parent_path"),
                     )
                 case "modify_command":
                     return await ai_scriptless_manager.modify_command(
                         args.get("test_id", ""),
-                        args.get("step_uuid", ""),
+                        args.get("step_path", ""),
                         args.get("arguments", {}),
                     )
                 case "delete_command":
                     return await ai_scriptless_manager.delete_command(
                         args.get("test_id", ""),
-                        args.get("step_uuid", ""),
+                        args.get("step_path", ""),
                     )
                 case "set_command_enabled":
                     return await ai_scriptless_manager.set_command_enabled(
                         args.get("test_id", ""),
-                        args.get("step_uuid", ""),
+                        args.get("step_path", ""),
                         args.get("enabled", True),
                     )
                 case "save_test":
@@ -817,36 +852,36 @@ Hints:
                     return await ai_scriptless_manager.add_logical_step(
                         args.get("test_id", ""),
                         args.get("label"),
-                        args.get("after_uuid"),
-                        args.get("parent_uuid"),
+                        args.get("after_path"),
+                        args.get("parent_path"),
                     )
                 case "add_loop":
                     return await ai_scriptless_manager.add_loop(
                         args.get("test_id", ""),
                         args.get("count", 1),
-                        args.get("after_uuid"),
-                        args.get("parent_uuid"),
+                        args.get("after_path"),
+                        args.get("parent_path"),
                     )
                 case "add_condition":
                     return await ai_scriptless_manager.add_condition(
                         args.get("test_id", ""),
                         args.get("expression"),
                         args.get("label"),
-                        args.get("after_uuid"),
-                        args.get("parent_uuid"),
+                        args.get("after_path"),
+                        args.get("parent_path"),
                     )
                 case "set_condition_expression":
                     return await ai_scriptless_manager.set_condition_expression(
                         args.get("test_id", ""),
-                        args.get("step_uuid", ""),
+                        args.get("step_path", ""),
                         args.get("expression", ""),
                     )
                 case "move_command":
                     return await ai_scriptless_manager.move_command(
                         args.get("test_id", ""),
-                        args.get("step_uuid", ""),
-                        args.get("after_uuid"),
-                        args.get("parent_uuid"),
+                        args.get("step_path", ""),
+                        args.get("after_path"),
+                        args.get("parent_path"),
                     )
                 case "delete_test":
                     return await ai_scriptless_manager.delete_test(args.get("test_id", ""))
