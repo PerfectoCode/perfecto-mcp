@@ -49,21 +49,18 @@ def build_move_test_body(
         test_id: str,
         folder: str,
         visibility: str,
-        owner: str,
 ) -> dict[str, Any]:
     src_visibility, src_path = split_item_key(test_id)
     file_name = test_file_name(test_id)
     target_folder = folder.strip("/")
-    target_directory = f"{target_folder}/{file_name}" if target_folder else file_name
+    target_artifact_id = f"{target_folder}/{file_name}" if target_folder else file_name
     return {
-        "copy": False,
-        "directoryPath": src_path,
-        "folderType": folder_type(src_visibility),
-        "targetDirectoryPath": target_directory,
-        "targetFolderType": folder_type(visibility),
         "repositoryType": "SCRIPTS",
-        "owner": owner,
-        "groupKey": None,
+        "keyDetails": {"artifactId": src_path, "version": "v0"},
+        "folderType": folder_type(src_visibility),
+        "targetKeyDetails": {"artifactId": target_artifact_id, "version": "v0"},
+        "targetFolderType": folder_type(visibility),
+        "copy": False,
     }
 
 

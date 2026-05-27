@@ -11,9 +11,9 @@ from config import perfecto
 from config.perfecto import TOOLS_PREFIX, SUPPORT_MESSAGE
 from config.token import PerfectoToken, token_verify
 from formatters.ai_scriptless import format_ai_scriptless_tests, \
-    format_ai_scriptless_tests_filter_values, format_command_catalog, \
-    format_command_definitions, format_snapshots_list, format_test_structure, \
-    format_test_variables
+    format_ai_scriptless_tests_filter_values, command_selection_policy_info, \
+    format_command_catalog, format_command_definitions, format_snapshots_list, \
+    format_test_structure, format_test_variables
 from models.manager import Manager
 from models.result import BaseResult, PaginationResult
 from tools.ai_scriptless_script import (
@@ -51,7 +51,6 @@ STEP_PATH_REFRESH_NOTES = [
     "After this operation, step paths may have changed. Call view_test_structure before the next edit; "
     "do not reuse step_path values from this response.",
 ]
-
 
 def _append_step_path_refresh_notes(result: BaseResult) -> BaseResult:
     if result.error or not isinstance(result.result, dict):
@@ -196,8 +195,11 @@ class AiScriptlessManager(Manager):
         commands_url = commands_url + "/commands"
         if checkpoint:
             commands_url = commands_url + "?checkpoint=true"
-        return await api_request(self.token, "GET", endpoint=commands_url,
-                                 result_formatter=format_command_catalog)
+        result = await api_request(self.token, "GET", endpoint=commands_url,
+                                   result_formatter=format_command_catalog)
+        if not result.error:
+            result.append_info(command_selection_policy_info())
+        return result
 
     @token_verify
     async def get_command_definitions(self, command_ids: list[str]) -> BaseResult:
@@ -484,9 +486,8 @@ class AiScriptlessManager(Manager):
             return BaseResult(error=str(exc))
 
         target_visibility = visibility or source_visibility
-        owner = await fetch_current_username(self.token) or ""
-        move_url = perfecto.get_repository_management_api_url(self.token.cloud_name) + "/directory"
-        body = build_move_test_body(test_id, folder, target_visibility, owner)
+        move_url = perfecto.get_repository_management_api_url(self.token.cloud_name) + "/artifacts"
+        body = build_move_test_body(test_id, folder, target_visibility)
         result = await api_request(self.token, "PATCH", endpoint=move_url, json=body)
         if result.error:
             return result
@@ -647,11 +648,12 @@ Actions:
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests (e.g. PRIVATE:My Folder/My Test.xml).
 - list_commands: List available AI Scriptless commands from the command repository.
+    Returns the catalog in result and command selection policy in info (read info before add_command when authoring tests).
     args(dict): Dictionary with the following optional parameters:
         checkpoint (bool, default=false): If true, list checkpoint commands only.
 - get_command_definitions: Get parameter definitions for one or more commands.
     args(dict): Dictionary with the following required parameters:
-        command_ids (list[str]): Command IDs from list_commands (e.g. ai_user-action, checkpoint_text).
+        command_ids (list[str]): Command IDs from list_commands (typically ai_user-action, ai_validation, ai_visual-comparison).
 - add_command: Add a command to a test and persist it.
     args(dict): Dictionary with the following parameters:
         test_id (str, required): Test itemKey from list_tests.
@@ -725,8 +727,9 @@ Actions:
 - move_test: Move a test to another folder (same or different visibility).
     args(dict): Dictionary with the following required parameters:
         test_id (str): Source test itemKey from list_tests.
-        folder (str): Target folder path without visibility prefix (e.g. 'My Folder' or 'Shared/Team').
+        folder (str): Target folder path without visibility prefix (e.g. 'My Folder', 'MCP Archive', or 'My Folder/SubFolder'). The test file keeps its name. If the path does not exist, the API creates the nested folder segments automatically (the new folder may not appear as a CONTAINER in list_tests until it contains tests).
         visibility (str, optional): Target visibility; defaults to the source test visibility.
+    Returns source_item_key and target_item_key; use target_item_key for view_test_structure, execute_test, and other actions after the move.
 - list_snapshots: List snapshot history for a test (includes '<current>' marker plus UUID historical versions).
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
@@ -756,8 +759,8 @@ Actions:
         test_id (str): Test itemKey from list_tests.
         name (str): Variable name to delete.
 Hints:
+- When authoring or editing test steps, call list_commands first and follow the command selection policy in the info field.
 - step_path is a dot-separated positional path without spaces (0-based indices; b0=Then branch, b1=Else). Example: root step 3 is "3"; first step inside Then of condition at 5 is "5.b0.0". Perfecto does not persist paths; they change when steps are inserted, moved, or deleted. Always call view_test_structure before the next structure edit; do not reuse step_path from a previous mutation response.
-- Use list_commands and get_command_definitions before add_command to discover valid command_ids and argument names.
 - Use parent_path on add_command with the step_path of a LogicalStep, Loop, or Branch from view_test_structure.
 - Use add_logical_step, add_loop, and add_condition to build control-flow structures matching the UI toolbar Group, Loop, and Condition actions.
 - Script variables (list_test_variables, add/modify/delete_test_variable) are stored in script.variables[] and are distinct from the DUT parameter in script.parameters[].

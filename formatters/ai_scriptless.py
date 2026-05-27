@@ -11,6 +11,31 @@ from models.ai_scriptless import (
     TestStructure,
 )
 
+PRIMARY_AI_COMMAND_IDS = (
+    "ai_user-action",
+    "ai_validation",
+    "ai_visual-comparison",
+)
+
+
+def command_selection_policy_info() -> List[str]:
+    """Context returned with list_commands so agents load policy when choosing command_ids."""
+    return [
+        "Command selection policy (when authoring tests with add_command / modify_command):",
+        "Default: use only these primary AI command_ids: "
+        + ", ".join(PRIMARY_AI_COMMAND_IDS) + ".",
+        "  • ai_user-action — user interactions (open browser/app, navigate to URL, tap, type, dismiss overlays); "
+        "argument: action (natural language).",
+        "  • ai_validation — checkpoints and assertions; argument: validation (natural language).",
+        "  • ai_visual-comparison — visual/baseline comparison; argument: name.",
+        "Prefer ai_user-action for navigation (e.g. open browser and go to URL), not browser_goto / browser_open.",
+        "Do not use browser_*, touch_tap, webpage.element_*, checkpoint_text, etc. unless the user explicitly "
+        "requests a non-AI command or agreed that AI commands cannot meet a documented requirement.",
+        "Structural helpers (add_logical_step, add_loop, add_condition, comment, wait) are OK; "
+        "keep observable steps AI-driven when possible.",
+        "Call get_command_definitions only for the AI command_ids you will use.",
+    ]
+
 def format_ai_scriptless_tests_filter_values(tests: dict[str, Any], params: Optional[dict] = None) -> dict[str, Any]:
     filter_values = {
         "test_name": [],
