@@ -11,7 +11,6 @@ from models.ai_scriptless import (
     TestStructure,
 )
 
-
 def format_ai_scriptless_tests_filter_values(tests: dict[str, Any], params: Optional[dict] = None) -> dict[str, Any]:
     filter_values = {
         "test_name": [],
@@ -147,28 +146,36 @@ def _step_display_name(element: dict[str, Any], definitions_map: dict[str, dict[
     return element_type or "Unknown"
 
 
-def _format_flow_element(element: dict[str, Any], definitions_map: dict[str, dict[str, Any]]) -> ScriptFlowElement:
+def _format_flow_element(
+        element: dict[str, Any],
+        definitions_map: dict[str, dict[str, Any]],
+        step_path: str,
+) -> ScriptFlowElement:
     element_type = element.get("@type", "")
     command = element.get("command")
     subcommand = element.get("subcommand")
     children: List[ScriptFlowElement] = []
 
     if element_type == "IfStatement":
-        for branch in element.get("branches", []):
+        for branch_index, branch in enumerate(element.get("branches", [])):
+            branch_path = f"{step_path}.b{branch_index}"
             branch_label = branch.get("clause", "Branch")
             branch_children = [
-                _format_flow_element(child, definitions_map)
-                for child in branch.get("flowElements", [])
+                _format_flow_element(child, definitions_map, f"{branch_path}.{child_index}")
+                for child_index, child in enumerate(branch.get("flowElements", []))
             ]
             children.append(ScriptFlowElement(
                 type="Branch",
                 name=branch_label.title() if branch_label else "Branch",
                 active=branch.get("active", True),
+                step_path=branch_path,
                 children=branch_children,
             ))
     else:
-        for child in element.get("flowElements", []):
-            children.append(_format_flow_element(child, definitions_map))
+        for child_index, child in enumerate(element.get("flowElements", [])):
+            children.append(
+                _format_flow_element(child, definitions_map, f"{step_path}.{child_index}")
+            )
 
     return ScriptFlowElement(
         type=element_type,
@@ -176,9 +183,19 @@ def _format_flow_element(element: dict[str, Any], definitions_map: dict[str, dic
         command=command,
         subcommand=subcommand,
         active=element.get("active", True),
-        uuid=element.get("uuid"),
+        step_path=step_path,
         children=children,
     )
+
+
+def _format_root_flow_elements(
+        flow_elements: list[dict[str, Any]],
+        definitions_map: dict[str, dict[str, Any]],
+) -> List[ScriptFlowElement]:
+    return [
+        _format_flow_element(element, definitions_map, str(index))
+        for index, element in enumerate(flow_elements)
+    ]
 
 
 def format_test_structure(payload: dict[str, Any], params: Optional[dict] = None) -> TestStructure:
@@ -190,14 +207,11 @@ def format_test_structure(payload: dict[str, Any], params: Optional[dict] = None
     for parameter in script.get("parameters", []):
         data = parameter.get("data", {})
         parameters.append(ScriptParameter(
-            name=parameter.get("name", ""),
+            name=data.get("name", parameter.get("name", "")),
             type=data.get("@type", "Unknown"),
         ))
 
-    flow_elements = [
-        _format_flow_element(element, definitions_map)
-        for element in script.get("flowElements", [])
-    ]
+    flow_elements = _format_root_flow_elements(script.get("flowElements", []), definitions_map)
 
     info = script.get("info", {})
     return TestStructure(
@@ -269,7 +283,6 @@ def format_test_variables(variables: Any, params: Optional[dict] = None) -> List
             type=_variable_type_label(data),
             value=value,
             secured=bool(data.get("secured")),
-            uuid=variable.get("uuid"),
             set_at_runtime=variable.get("@type") == "Parameter",
         ))
     return formatted
