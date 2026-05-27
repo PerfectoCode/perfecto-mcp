@@ -71,5 +71,20 @@ def get_ai_scriptless_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/native-automation-webapp/rest/v1/native-automation"
 
 
+def get_ai_scriptless_draft_api_url(cloud_name: str) -> str:
+    return f"https://{cloud_name}.app.perfectomobile.com/native-automation-webapp/rest/v1/draft-management/draft"
+
+
 def get_ai_scriptless_execution_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.perfectomobile.com/scriptless-mobile-engine/script-executor/api/executions"
+
+
+def get_ai_scriptless_command_repository_url(cloud_name: str) -> str:
+    return f"https://{cloud_name}.perfectomobile.com/scriptless-mobile-engine/command-repository/api"
+
+
+def get_repository_management_api_url(cloud_name: str) -> str:
+    return (
+        f"https://{cloud_name}.app.perfectomobile.com"
+        "/repository-management-webapp/rest/v2/repository-management"
+    )
