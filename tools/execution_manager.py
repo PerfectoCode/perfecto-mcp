@@ -12,6 +12,7 @@ from config.token import PerfectoToken, token_verify
 from formatters.execution import format_executions
 from models.manager import Manager
 from models.result import BaseResult, PaginationResult
+from telemetry import run_tool
 from tools.utils import api_request
 
 
@@ -262,7 +263,8 @@ Hints:
         if args is None:
             args = {}
         execution_manager = ExecutionManager(token, ctx)
-        try:
+
+        async def _dispatch():
             match action:
                 case "list_live_executions":
                     return await execution_manager.list_live_executions()
@@ -280,6 +282,9 @@ Hints:
                     return BaseResult(
                         error=f"Action {action} not found in execution manager tool"
                     )
+
+        try:
+            return await run_tool(f"{TOOLS_PREFIX}_execution", action, ctx, _dispatch)
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {traceback.format_exc()}"

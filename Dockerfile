@@ -43,6 +43,7 @@ RUN chmod +x ./perfecto-mcp && \
 USER perfecto-mcp
 
 ENV MCP_DOCKER=true
+ENV OTEL_EXPORTER_OTLP_ENDPOINT=""
 
 # Command to run the application
 ENTRYPOINT ["./perfecto-mcp"]

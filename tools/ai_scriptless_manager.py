@@ -13,6 +13,7 @@ from formatters.ai_scriptless import format_ai_scriptless_tests, \
     format_ai_scriptless_tests_filter_values
 from models.manager import Manager
 from models.result import BaseResult, PaginationResult
+from telemetry import run_tool
 from tools.utils import api_request
 
 
@@ -194,7 +195,8 @@ Hints:
         if args is None:
             args = {}
         ai_scriptless_manager = AiScriptlessManager(token, ctx)
-        try:
+
+        async def _dispatch():
             match action:
                 case "list_tests":
                     return await ai_scriptless_manager.list_tests(args)
@@ -208,6 +210,9 @@ Hints:
                     return BaseResult(
                         error=f"Action {action} not found in AI Scriptless manager tool"
                     )
+
+        try:
+            return await run_tool(f"{TOOLS_PREFIX}_ai_scriptless", action, ctx, _dispatch)
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {traceback.format_exc()}"

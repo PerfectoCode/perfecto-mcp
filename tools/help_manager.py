@@ -15,6 +15,7 @@ from formatters.help import format_list_real_devices_extended_commands_info, \
     format_read_real_devices_extended_command_info, format_help_info
 from models.manager import Manager
 from models.result import BaseResult
+from telemetry import run_tool
 from tools.help_utils import convert_js_to_py_dict
 from tools.utils import http_request
 
@@ -253,7 +254,8 @@ Hints:
         if args is None:
             args = {}
         help_manager = HelpManager(token, ctx)
-        try:
+
+        async def _dispatch():
             match action:
                 case "list_help_categories":
                     return await help_manager.list_help_categories()
@@ -272,6 +274,9 @@ Hints:
                     return BaseResult(
                         error=f"Action {action} not found in help manager tool"
                     )
+
+        try:
+            return await run_tool(f"{TOOLS_PREFIX}_help", action, ctx, _dispatch)
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {traceback.format_exc()}"
