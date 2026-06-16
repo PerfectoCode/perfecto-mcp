@@ -12,6 +12,7 @@ from formatters.device import format_real_device, format_virtual_device
 from formatters.grid import format_grid_info
 from models.manager import Manager
 from models.result import BaseResult
+from telemetry import run_tool
 from tools.utils import api_request
 
 
@@ -83,7 +84,8 @@ Actions:
         if args is None:
             args = {}
         device_manager = DeviceManager(token, ctx)
-        try:
+
+        async def _dispatch():
             match action:
                 case "read_selenium_grid_info":
                     return await device_manager.read_selenium_grid_info()
@@ -99,6 +101,9 @@ Actions:
                     return BaseResult(
                         error=f"Action {action} not found in device manager tool"
                     )
+
+        try:
+            return await run_tool(f"{TOOLS_PREFIX}_devices", action, ctx, _dispatch)
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {traceback.format_exc()}"
