@@ -36,6 +36,24 @@ def test_file_name(item_key: str) -> str:
     return path.rsplit("/", 1)[-1]
 
 
+VISIBILITY_UI_ROOT = {
+    "PRIVATE": "My Tests",
+    "PUBLIC": "Public Tests",
+    "GROUP": "Group Tests",
+}
+
+
+def format_test_ui_location(item_key: str) -> str:
+    """Map itemKey to folder/test labels shown in the AI Scriptless Open Test UI."""
+    visibility, path = split_item_key(item_key)
+    root = VISIBILITY_UI_ROOT.get(visibility, visibility)
+    file_name = test_file_name(item_key).removesuffix(".xml")
+    folder = path.rsplit("/", 1)[0] if "/" in path else ""
+    if folder:
+        return f'"{root}" → folder "{folder}" → test "{file_name}"'
+    return f'"{root}" → test "{file_name}"'
+
+
 def build_snapshot_search_body(test_id: str) -> dict[str, Any]:
     visibility, artifact_id = split_item_key(test_id)
     return {

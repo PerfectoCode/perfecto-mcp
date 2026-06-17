@@ -42,6 +42,7 @@ from tools.ai_scriptless_script import (
     set_element_enabled,
     split_item_key,
     test_file_name,
+    format_test_ui_location,
     update_element_arguments,
 )
 from tools.utils import api_request
@@ -59,6 +60,24 @@ def _append_step_path_refresh_notes(result: BaseResult) -> BaseResult:
     for note in STEP_PATH_REFRESH_NOTES:
         if note not in notes:
             notes.append(note)
+    return result
+
+
+def _append_ui_access_info(
+        result: BaseResult,
+        cloud_name: str,
+        test_id: Optional[str] = None,
+) -> BaseResult:
+    if result.error:
+        return result
+    lab_url = perfecto.get_ai_scriptless_lab_url(cloud_name)
+    lines = [f"AI Scriptless UI (no per-test deep link): [{lab_url}]({lab_url})"]
+    if test_id:
+        lines.append(
+            "If you need to open it in the UI: Tests → Open or Manage tests, then navigate to "
+            f"{format_test_ui_location(test_id)}"
+        )
+    result.append_info(lines)
     return result
 
 
@@ -88,12 +107,13 @@ class AiScriptlessManager(Manager):
             has_more=page_size - len(tests_result.result) <= 0,
         )
 
-        return BaseResult(
+        result = BaseResult(
             result=page_result,
             error=tests_result.error,
             warning=tests_result.warning,
             info=tests_result.info,
         )
+        return _append_ui_access_info(result, self.token.cloud_name)
 
     @token_verify
     async def list_filter_values(self, filter_names: list[str]) -> BaseResult:
@@ -217,9 +237,10 @@ class AiScriptlessManager(Manager):
             return BaseResult(error="test_id is required (itemKey from list_tests)")
         script_url = perfecto.get_ai_scriptless_api_url(self.token.cloud_name)
         script_url = script_url + f"/script?itemKey={quote(test_id, safe='')}"
-        return await api_request(self.token, "GET", endpoint=script_url,
+        result = await api_request(self.token, "GET", endpoint=script_url,
                                  result_formatter=format_test_structure,
                                  result_formatter_params={"item_key": test_id})
+        return _append_ui_access_info(result, self.token.cloud_name, test_id)
 
     @token_verify
     async def add_command(
@@ -321,7 +342,8 @@ class AiScriptlessManager(Manager):
             return BaseResult(error="name is required")
         item_key = build_item_key(visibility, folder, name)
         script = new_empty_script()
-        return await persist_script(self.token, item_key, script)
+        result = await persist_script(self.token, item_key, script)
+        return _append_ui_access_info(result, self.token.cloud_name, item_key)
 
     @token_verify
     async def save_test_as(
@@ -342,9 +364,10 @@ class AiScriptlessManager(Manager):
                 return payload_result
             script = payload_result.result.get("script", {})
         item_key = build_item_key(visibility, folder, name)
-        return _append_step_path_refresh_notes(
+        result = _append_step_path_refresh_notes(
             await persist_script(self.token, item_key, script, snapshot_comment=comment)
         )
+        return _append_ui_access_info(result, self.token.cloud_name, item_key)
 
     async def _add_structure(
             self,
@@ -759,6 +782,10 @@ Actions:
         test_id (str): Test itemKey from list_tests.
         name (str): Variable name to delete.
 Hints:
+- LICENSE: AI Scriptless actions require a Perfecto AI license on your cloud (administrator opt-in via feature toggle). Without it, AI commands and related MCP operations will not work. Desktop web test authoring additionally requires the Desktop Web license.
+- COVERAGE: DataTables, Scheduler (scheduled jobs), Embedded tests, and other advanced UI capabilities (folder management, rename test, restore snapshot, download as Appium, AI Assistant, Object Spy, per-step error policy, etc.) are not yet supported by this MCP tool. 
+- HELP: For product behavior and workarounds, use the perfecto_help tool: Filter by category_id='perfecto', subcategory_id_list=['ide'].
+- UI_ACCESS: No per-test URL exists. Only UI entry: cloud_url/lab/scriptless-mobile/ (cloud_url from perfecto_user read_user). For debugging or unsupported MCP tasks, link the lab URL and tell the user to open the test via Tests → Open or Manage tests using the folder tree and test name from list_tests (itemKey is MCP-only; the UI shows folders and names, not itemKey). Never invent other scriptless URLs.
 - When authoring or editing test steps, call list_commands first and follow the command selection policy in the info field.
 - step_path is a dot-separated positional path without spaces (0-based indices; b0=Then branch, b1=Else). Example: root step 3 is "3"; first step inside Then of condition at 5 is "5.b0.0". Perfecto does not persist paths; they change when steps are inserted, moved, or deleted. Always call view_test_structure before the next structure edit; do not reuse step_path from a previous mutation response.
 - Use parent_path on add_command with the step_path of a LogicalStep, Loop, or Branch from view_test_structure.
