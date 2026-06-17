@@ -15,6 +15,14 @@ HELP_INDEX_URL = f"{HELP_TOC_URL}perfecto_help.js"
 HELP_BASE_CONTENT_URL = "https://help.perfecto.io/perfecto-help/content/"
 
 
+def get_cloud_app_url(cloud_name: str) -> str:
+    return f"https://{cloud_name}.app.perfectomobile.com"
+
+
+def get_ai_scriptless_lab_url(cloud_name: str) -> str:
+    return f"{get_cloud_app_url(cloud_name)}/lab/scriptless-mobile/"
+
+
 def get_tenant_management_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/tenant-management-webapp/rest/v1/tenant-management/tenants/current"
 
