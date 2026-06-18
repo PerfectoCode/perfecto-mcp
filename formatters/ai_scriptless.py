@@ -1,5 +1,7 @@
 from typing import List, Any, Optional
 
+import copy
+
 from models.ai_scriptless import (
     CommandCatalogEntry,
     CommandDefinitionSummary,
@@ -10,6 +12,7 @@ from models.ai_scriptless import (
     SnapshotSummary,
     TestStructure,
 )
+from tools.ai_scriptless.elements import normalize_if_statement_aliases
 
 PRIMARY_AI_COMMAND_IDS = (
     "ai_user-action",
@@ -225,7 +228,8 @@ def _format_root_flow_elements(
 
 def format_test_structure(payload: dict[str, Any], params: Optional[dict] = None) -> TestStructure:
     item_key = params.get("item_key", "") if params else ""
-    script = payload.get("script", {})
+    script = copy.deepcopy(payload.get("script", {}))
+    normalize_if_statement_aliases(script)
     definitions_map = _definitions_map(payload.get("commandDefinitions"))
 
     parameters = []
