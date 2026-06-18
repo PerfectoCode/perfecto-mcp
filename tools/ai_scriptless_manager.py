@@ -27,7 +27,6 @@ from tools.ai_scriptless_script import (
     build_snapshot_search_body,
     delete_script_variable,
     delete_element_by_path,
-    fetch_current_username,
     fetch_script_payload,
     find_element_by_path,
     find_step_path_for_element,
@@ -41,7 +40,7 @@ from tools.ai_scriptless_script import (
     set_condition_expression,
     set_element_enabled,
     split_item_key,
-    test_file_name,
+    item_key_file_name,
     format_test_ui_location,
     update_element_arguments,
 )
@@ -98,13 +97,14 @@ class AiScriptlessManager(Manager):
                                          result_formatter_params={"page_size": page_size, "skip": skip,
                                                                   "filters": args})
 
+        items = tests_result.result or []
         page_result = PaginationResult(
-            items=tests_result.result,
-            count=len(tests_result.result),
+            items=items,
+            count=len(items),
             page=page_index,
             offset=skip,
             next_offset=skip + page_size,
-            has_more=page_size - len(tests_result.result) <= 0,
+            has_more=page_size - len(items) <= 0,
         )
 
         result = BaseResult(
@@ -517,7 +517,7 @@ class AiScriptlessManager(Manager):
         target_item_key = build_item_key(
             target_visibility,
             folder,
-            test_file_name(test_id).removesuffix(".xml"),
+            item_key_file_name(test_id).removesuffix(".xml"),
         )
         result.result = {
             "source_item_key": test_id,
