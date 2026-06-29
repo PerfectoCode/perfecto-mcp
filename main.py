@@ -12,6 +12,7 @@ from config.perfecto import SECURITY_TOKEN_FILE_ENV_NAME, SECURITY_TOKEN_ENV_NAM
 from config.token import PerfectoToken, PerfectoTokenError
 from config.version import __version__, __executable__, __bundle__, __uvx__, get_version
 from server import register_tools
+from telemetry import init_telemetry
 
 PERFECTO_SECURITY_TOKEN_FILE_NAME = "perfecto-security-token.txt"
 PERFECTO_SECURITY_TOKEN_FILE_PATH = os.getenv(SECURITY_TOKEN_FILE_ENV_NAME)
@@ -63,6 +64,7 @@ def get_token() -> PerfectoToken:
 
 
 def run(log_level: str = "CRITICAL"):
+    init_telemetry("perfecto-mcp", __version__)
     token = get_token()
 
     instructions = """
