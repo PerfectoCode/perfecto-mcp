@@ -11,6 +11,7 @@ from config.token import PerfectoToken, token_verify
 from formatters.user import format_users
 from models.manager import Manager
 from models.result import BaseResult
+from telemetry import run_tool
 from tools.utils import api_request
 
 
@@ -54,7 +55,8 @@ Hints:
         if args is None:
             args = {}
         user_manager = UserManager(token, ctx)
-        try:
+
+        async def _dispatch():
             match action:
                 case "read_user":
                     return await user_manager.read_user()
@@ -62,6 +64,9 @@ Hints:
                     return BaseResult(
                         error=f"Action {action} not found in user manager tool"
                     )
+
+        try:
+            return await run_tool(f"{TOOLS_PREFIX}_user", action, ctx, _dispatch)
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {traceback.format_exc()}"
