@@ -2,6 +2,7 @@
 Simple utilities for Perfecto MCP tools.
 """
 import base64
+import json
 import os
 import platform
 import sys
@@ -52,7 +53,13 @@ async def api_request(token: Optional[PerfectoToken], method: str, endpoint: str
         try:
             resp = await client.request(method, endpoint, headers=headers, **kwargs)
             resp.raise_for_status()
-            result = resp.json()
+            if not resp.content or not resp.content.strip():
+                result = None
+            else:
+                try:
+                    result = resp.json()
+                except json.JSONDecodeError:
+                    result = resp.text
             error = None
             if isinstance(result, list) and len(result) > 0 and "userMessage" in result[0]:  # It's an error
                 final_result = None
