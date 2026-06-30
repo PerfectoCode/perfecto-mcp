@@ -43,6 +43,8 @@ RUN chmod +x ./perfecto-mcp && \
 USER perfecto-mcp
 
 ENV MCP_DOCKER=true
+# Telemetry defaults to the Perforce gRPC collector. Override the destination
+# with OTEL_EXPORTER_OTLP_ENDPOINT, or set OTEL_SDK_DISABLED=true to turn it off.
 
 # Command to run the application
 ENTRYPOINT ["./perfecto-mcp"]

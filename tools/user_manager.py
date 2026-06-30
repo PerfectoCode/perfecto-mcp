@@ -6,11 +6,12 @@ from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from config import perfecto
-from config.perfecto import TOOLS_PREFIX, SUPPORT_MESSAGE
+from config.perfecto import TOOLS_PREFIX, SUPPORT_MESSAGE, get_cloud_app_url
 from config.token import PerfectoToken, token_verify
 from formatters.user import format_users
 from models.manager import Manager
 from models.result import BaseResult
+from telemetry import run_tool
 from tools.utils import api_request
 
 
@@ -22,7 +23,17 @@ class UserManager(Manager):
     async def read_user(self) -> BaseResult:
         user_url = perfecto.get_user_management_api_url(self.token.cloud_name)
         user_url = user_url + "/current"
-        return await api_request(self.token, "GET", endpoint=user_url, result_formatter=format_users)
+        cloud_url = get_cloud_app_url(self.token.cloud_name)
+        result = await api_request(
+            self.token,
+            "GET",
+            endpoint=user_url,
+            result_formatter=format_users,
+            result_formatter_params={"cloud_name": self.token.cloud_name},
+        )
+        if not result.error:
+            result.append_info([f"Connected Perfecto cloud: [{cloud_url}]({cloud_url})"])
+        return result
 
 
 def register(mcp, token: Optional[PerfectoToken]):
@@ -31,7 +42,9 @@ def register(mcp, token: Optional[PerfectoToken]):
         description="""
 Operations on user information.
 Actions:
-- read_user: Read a current user information from Perfecto.
+- read_user: Read the current user and connected Perfecto cloud environment (cloud_name, cloud_url from PERFECTO_CLOUD_NAME).
+Hints:
+- Always render cloud_url as a markdown link when presenting the environment to the user.
 """
     )
     async def user(
@@ -42,7 +55,8 @@ Actions:
         if args is None:
             args = {}
         user_manager = UserManager(token, ctx)
-        try:
+
+        async def _dispatch():
             match action:
                 case "read_user":
                     return await user_manager.read_user()
@@ -50,6 +64,9 @@ Actions:
                     return BaseResult(
                         error=f"Action {action} not found in user manager tool"
                     )
+
+        try:
+            return await run_tool(f"{TOOLS_PREFIX}_user", action, ctx, _dispatch)
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {traceback.format_exc()}"

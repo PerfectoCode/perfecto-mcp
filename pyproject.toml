@@ -1,12 +1,15 @@
 [project]
 name = "perfecto-mcp"
-version = "1.0.1"
+version = "1.1.0"
 description = "MCP server for Perfecto Cloud Platform"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "httpx[http2]>=0.28.1",
     "mcp[cli]>=1.17.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
     "pyinstaller>=6.0.0",
     "pydantic>=2.11.7",
     "pydantic-core>=2.33.2",
@@ -18,8 +21,13 @@ dependencies = [
 perfecto-mcp = "main:main"
 
 [tool.setuptools]
-py-modules = ["main", "server"]
+py-modules = ["main", "server", "telemetry"]
 include-package-data = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -27,3 +35,6 @@ include = ["tools", "config", "models", "formatters", "resources"]
 
 [tool.setuptools.package-data]
 "resources" = ["*.png"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
