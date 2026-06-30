@@ -16,6 +16,9 @@ limitations under the License.
 
 from formatters.ai_scriptless import (
     _command_id,
+    _command_step_display_name,
+    _definitions_map,
+    _step_display_name,
     command_selection_policy_info,
     format_ai_scriptless_tests,
     format_ai_scriptless_tests_filter_values,
@@ -33,6 +36,56 @@ from tools.ai_scriptless_script import (
 )
 
 
+def _ai_validation_command_definition() -> dict:
+    return {
+        "commandId": "ai_validation",
+        "name": "AI Validation",
+        "data": {
+            "display": {"name": "AI Validation"},
+            "mandatoryParameters": [
+                {
+                    "name": "validation",
+                    "display": {
+                        "name": "Validation",
+                        "editorLevel": "PUBLIC",
+                        "inReport": True,
+                    },
+                },
+            ],
+            "optionalParameters": [
+                {
+                    "name": "handsetId",
+                    "display": {
+                        "name": "Device ID",
+                        "editorLevel": "PUBLIC",
+                        "inReport": False,
+                    },
+                },
+            ],
+        },
+    }
+
+
+def _comment_command_definition() -> dict:
+    return {
+        "commandId": "comment",
+        "name": "Comment",
+        "data": {
+            "display": {"name": "Comment"},
+            "mandatoryParameters": [
+                {
+                    "name": "text",
+                    "display": {
+                        "name": "Text",
+                        "editorLevel": "PUBLIC",
+                        "inReport": True,
+                    },
+                },
+            ],
+        },
+    }
+
+
 def _tree_api_payload() -> dict:
     script = new_empty_script()
     tap = build_flow_element("ai_user-action", {"action": "Tap login"})
@@ -47,11 +100,7 @@ def _tree_api_payload() -> dict:
     return {
         "script": script,
         "commandDefinitions": [
-            {
-                "commandId": "comment",
-                "name": "Comment",
-                "data": {"display": {"name": "Comment step"}},
-            },
+            _comment_command_definition(),
         ],
     }
 
@@ -107,11 +156,129 @@ class TestFormatTestStructure:
         assert then_branch.type == "Branch"
         assert then_branch.step_path == "2.b0"
         assert then_branch.children[0].step_path == "2.b0.0"
+        assert then_branch.children[0].name == "OK"
 
     def test_uses_definition_display_name_for_non_ai_commands(self):
         structure = format_test_structure(_tree_api_payload())
         comment_step = structure.flow_elements[1].children[0]
-        assert comment_step.name == "Comment step"
+        assert comment_step.name == "Comment (Text: inside group)"
+
+
+class TestCommandStepDisplayName:
+    def test_ai_validation_uses_validation_argument_as_display_name(self):
+        element = build_flow_element("ai_validation", {"validation": "Screen visible"})
+        assert _step_display_name(element, {}) == "Screen visible"
+
+    def test_ai_validation_without_validation_text_uses_base_name_not_device_id(self):
+        element = build_flow_element("ai_validation")
+        definitions_map = _definitions_map([_ai_validation_command_definition()])
+        assert _step_display_name(element, definitions_map) == "AI Validation"
+        assert _command_step_display_name(element, "ai_validation", definitions_map) == "AI Validation"
+
+    def test_ai_user_action_without_action_text_uses_base_name_not_device_id(self):
+        element = build_flow_element("ai_user-action")
+        definitions_map = _definitions_map([
+            {
+                "commandId": "ai_user-action",
+                "name": "AI User Action",
+                "data": {
+                    "display": {"name": "AI User Action"},
+                    "mandatoryParameters": [
+                        {
+                            "name": "action",
+                            "display": {
+                                "name": "Action",
+                                "editorLevel": "PUBLIC",
+                                "inReport": True,
+                            },
+                        },
+                    ],
+                    "optionalParameters": [
+                        {
+                            "name": "handsetId",
+                            "display": {
+                                "name": "Device ID",
+                                "editorLevel": "PUBLIC",
+                                "inReport": False,
+                            },
+                        },
+                    ],
+                },
+            },
+        ])
+        assert _step_display_name(element, definitions_map) == "AI User Action"
+
+    def test_serializes_public_parameters_like_perfecto_ui(self):
+        element = build_flow_element("comment", {"text": "Hello Comment!"})
+        definitions_map = _definitions_map([_comment_command_definition()])
+        assert _command_step_display_name(element, "comment", definitions_map) == (
+            "Comment (Text: Hello Comment!)"
+        )
+
+    def test_skips_non_public_parameters(self):
+        element = build_flow_element("wait", {"duration": "5"})
+        definitions_map = _definitions_map([
+            {
+                "commandId": "wait",
+                "name": "Wait",
+                "data": {
+                    "display": {"name": "Wait"},
+                    "mandatoryParameters": [
+                        {
+                            "name": "duration",
+                            "display": {
+                                "name": "Duration",
+                                "editorLevel": "PUBLIC",
+                                "inReport": True,
+                            },
+                        },
+                    ],
+                    "optionalParameters": [
+                        {
+                            "name": "handsetId",
+                            "display": {
+                                "name": "Device",
+                                "editorLevel": "PRIVATE",
+                                "inReport": False,
+                            },
+                        },
+                    ],
+                },
+            },
+        ])
+        assert _command_step_display_name(element, "wait", definitions_map) == "Wait (Duration: 5)"
+
+    def test_skips_public_parameters_when_in_report_is_false(self):
+        element = build_flow_element("wait", {"duration": "5"})
+        definitions_map = _definitions_map([
+            {
+                "commandId": "wait",
+                "name": "Wait",
+                "data": {
+                    "display": {"name": "Wait"},
+                    "mandatoryParameters": [
+                        {
+                            "name": "duration",
+                            "display": {
+                                "name": "Duration",
+                                "editorLevel": "PUBLIC",
+                                "inReport": False,
+                            },
+                        },
+                    ],
+                },
+            },
+        ])
+        assert _command_step_display_name(element, "wait", definitions_map) == "Wait"
+
+    def test_returns_base_name_when_public_parameter_has_no_value(self):
+        element = build_flow_element("comment")
+        definitions_map = _definitions_map([_comment_command_definition()])
+        assert _command_step_display_name(element, "comment", definitions_map) == "Comment"
+
+    def test_falls_back_to_base_name_without_definition(self):
+        element = build_flow_element("comment", {"text": "orphan"})
+        assert _command_step_display_name(element, "comment", {}) is None
 
 
 class TestFormatCommandCatalog:
