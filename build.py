@@ -89,6 +89,17 @@ def get_icon_file(system: str) -> str:
 
 
 def run_pyinstaller(name: str, icon: str):
+    hiddenimports = [
+        "tools.ai_scriptless",
+        "tools.ai_scriptless.commands",
+        "tools.ai_scriptless.elements",
+        "tools.ai_scriptless.item_key",
+        "tools.ai_scriptless.persistence",
+        "tools.ai_scriptless.script",
+        "tools.ai_scriptless.step_path",
+        "tools.ai_scriptless.tree",
+        "tools.ai_scriptless.variables",
+    ]
     PyInstaller.__main__.run([
         'main.py',
         '--onefile',
@@ -99,6 +110,19 @@ def run_pyinstaller(name: str, icon: str):
         f'--icon={icon}',
         '--clean',
         '--noconfirm',
+        *[f'--hidden-import={module}' for module in hiddenimports],
+        '--hidden-import=opentelemetry.sdk.trace',
+        '--hidden-import=opentelemetry.sdk.trace.export',
+        '--hidden-import=opentelemetry.sdk.resources',
+        '--hidden-import=opentelemetry.sdk.metrics',
+        '--hidden-import=opentelemetry.sdk.metrics.export',
+        '--hidden-import=opentelemetry.exporter.otlp.proto.grpc.trace_exporter',
+        '--hidden-import=opentelemetry.exporter.otlp.proto.grpc.metric_exporter',
+        '--hidden-import=opentelemetry.exporter.otlp.proto.http.trace_exporter',
+        '--hidden-import=opentelemetry.exporter.otlp.proto.http.metric_exporter',
+        '--hidden-import=opentelemetry.propagate',
+        '--collect-submodules=opentelemetry',
+        '--collect-all=grpc',
     ])
 
 
