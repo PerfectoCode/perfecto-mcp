@@ -128,6 +128,94 @@ def _definition_display_name(command_id: Optional[str], definitions_map: dict[st
     return display.get("name") or definition.get("name")
 
 
+def _definition_data(definition: dict[str, Any]) -> dict[str, Any]:
+    data = definition.get("data", definition)
+    return data if isinstance(data, dict) else {}
+
+
+def _iter_definition_parameters(definition: dict[str, Any]):
+    seen: set[str] = set()
+    for key in ("parameters", "mandatoryParameters", "optionalParameters"):
+        for param in _definition_data(definition).get(key) or []:
+            if not isinstance(param, dict):
+                continue
+            param_name = param.get("name") or param.get("parameterName")
+            if not param_name or param_name in seen:
+                continue
+            seen.add(param_name)
+            yield param
+
+
+def _should_include_parameter_in_step_display(param: dict[str, Any]) -> bool:
+    display = param.get("display") or {}
+    if display.get("editorLevel") != "PUBLIC":
+        return False
+    in_report = display.get("inReport", param.get("inReport"))
+    return in_report is True
+
+
+def _parameter_display_label(param: dict[str, Any]) -> str:
+    display = param.get("display") or {}
+    param_name = param.get("name") or param.get("parameterName") or ""
+    return display.get("name") or param_name
+
+
+def _format_argument_display_value(element: dict[str, Any], argument_name: str) -> Optional[str]:
+    for argument in element.get("arguments", []):
+        if argument.get("name") != argument_name:
+            continue
+        data = argument.get("data", {})
+        value = data.get("value")
+        if value is None:
+            return None
+        if data.get("secured"):
+            return "<secured>"
+        return str(value)
+    return None
+
+
+def _command_step_display_name(
+        element: dict[str, Any],
+        command_id: Optional[str],
+        definitions_map: dict[str, dict[str, Any]],
+) -> Optional[str]:
+    if not command_id or command_id not in definitions_map:
+        return None
+
+    base_name = _definition_display_name(command_id, definitions_map)
+    if not base_name:
+        return None
+
+    segments: list[str] = []
+    definition = definitions_map[command_id]
+    for param in _iter_definition_parameters(definition):
+        if not _should_include_parameter_in_step_display(param):
+            continue
+        param_name = param.get("name") or param.get("parameterName")
+        if not param_name:
+            continue
+        value = _format_argument_display_value(element, param_name)
+        if value is None or value == "":
+            continue
+        segments.append(f"{_parameter_display_label(param)}: {value}")
+
+    if not segments:
+        return base_name
+    return f"{base_name} ({', '.join(segments)})"
+
+
+def _ai_primary_step_display_name(
+        element: dict[str, Any],
+        command_id: Optional[str],
+        definitions_map: dict[str, dict[str, Any]],
+        argument_name: str,
+) -> Optional[str]:
+    primary_text = _argument_value(element, argument_name)
+    if primary_text:
+        return str(primary_text)
+    return _definition_display_name(command_id, definitions_map)
+
+
 def _step_display_name(element: dict[str, Any], definitions_map: dict[str, dict[str, Any]]) -> str:
     element_type = element.get("@type", "")
     command = element.get("command")
@@ -135,9 +223,18 @@ def _step_display_name(element: dict[str, Any], definitions_map: dict[str, dict[
     command_id = _command_id(command, subcommand)
 
     if command == "ai" and subcommand == "user-action":
-        action_text = _argument_value(element, "action")
-        if action_text:
-            return action_text
+        display_name = _ai_primary_step_display_name(
+            element, command_id, definitions_map, "action",
+        )
+        if display_name:
+            return display_name
+
+    if command == "ai" and subcommand == "validation":
+        display_name = _ai_primary_step_display_name(
+            element, command_id, definitions_map, "validation",
+        )
+        if display_name:
+            return display_name
 
     if element_type == "Loop":
         iterator = element.get("iterator", {})
@@ -162,7 +259,9 @@ def _step_display_name(element: dict[str, Any], definitions_map: dict[str, dict[
         clause = element.get("clause", "")
         return clause.title() if clause else "Branch"
 
-    display_name = _definition_display_name(command_id, definitions_map)
+    display_name = _command_step_display_name(element, command_id, definitions_map)
+    if not display_name:
+        display_name = _definition_display_name(command_id, definitions_map)
     if display_name:
         return display_name
 
