@@ -86,7 +86,7 @@ https://github.com/user-attachments/assets/10fffeee-b01d-4138-af7a-ea0018471730
     "Perfecto MCP": {
       "command": "uvx",
       "args": [
-        "--from", "git+https://github.com/PerfectoCode/perfecto-mcp.git@v1.0",
+        "--from", "git+https://github.com/PerfectoCode/perfecto-mcp.git@v1.1.1",
         "-q", "perfecto-mcp", "--mcp"
       ],
       "env": {
