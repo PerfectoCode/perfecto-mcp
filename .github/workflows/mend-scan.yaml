@@ -1,6 +1,9 @@
 name: Mend CLI Scan
 
 on:
+  workflow_run:
+    workflows: ["Tests"]
+    types: [completed]
   workflow_dispatch:
   push:
 
@@ -8,6 +11,7 @@ on:
 jobs:
   mend-scan:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }} 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
