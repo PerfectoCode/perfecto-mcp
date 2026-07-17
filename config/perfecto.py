@@ -1,7 +1,8 @@
 TOOLS_PREFIX: str = "perfecto"
-WEBSITE: str = "https://github.com/PerfectoCore/perfecto-mcp/"
-GITHUB: str = "https://github.com/PerfectoCore/perfecto-mcp"
-SUPPORT_MESSAGE: str = "If you think this is a bug, please contact Perfecto support or report issue at https://github.com/PerfectoCore/perfecto-mcp/issues"
+WEBSITE: str = "https://github.com/PerfectoCode/perfecto-mcp/"
+GITHUB: str = "https://github.com/PerfectoCode/perfecto-mcp"
+GITHUB_API_LATEST_RELEASE: str = "https://api.github.com/repos/PerfectoCode/perfecto-mcp/releases/latest"
+SUPPORT_MESSAGE: str = "If you think this is a bug, please contact Perfecto support or report issue at https://github.com/PerfectoCode/perfecto-mcp/issues"
 
 SECURITY_TOKEN_FILE_ENV_NAME: str = "PERFECTO_SECURITY_TOKEN_FILE"
 SECURITY_TOKEN_ENV_NAME: str = "PERFECTO_SECURITY_TOKEN"
