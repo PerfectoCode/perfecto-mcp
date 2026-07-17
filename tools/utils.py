@@ -5,14 +5,17 @@ import base64
 import json
 import os
 import platform
+import re
 import sys
-from datetime import datetime
+import traceback
+from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
 from typing import Optional, Callable
 
 import httpx
 
+from config.security import validate_http_request_endpoint
 from config.token import PerfectoToken
 from config.version import __version__
 from models.result import BaseResult
@@ -30,6 +33,77 @@ timeout = httpx.Timeout(
     write=15.0,
     pool=60.0
 )
+project_root = Path(__file__).resolve().parent.parent
+# Match Windows absolute paths (backslash or forward slash; latter may appear on POSIX).
+# Negative lookbehind ensures we don't match URL protocols like https:// (where the
+# letter before ':' is preceded by more letters, e.g. 'http' in 'https://').
+windows_abs_path_pattern = re.compile(
+    r"(?<![A-Za-z])[A-Za-z]:[\\/](?:[^\\\n\r\t\"']+[\\/])*[^\\\n\r\t\"']*"
+)
+unix_abs_path_pattern = re.compile(
+    r"/(?:"
+    r"Users|home|root"  # User home directories (macOS, Linux)
+    r"|var|tmp|etc|opt|srv"  # Standard Linux directories
+    r"|mnt|run|media"  # Mount points and runtime (Linux)
+    r"|app|data"  # Common Docker container directories
+    r"|System|Library|Applications|private|Volumes"  # macOS directories
+    r")/[^\n\r\t\"']+"
+)
+
+
+def sanitize_path(path_value: str) -> str:
+    if not path_value:
+        return path_value
+
+    # On POSIX, Windows-style paths (e.g. from compile() or cross-platform code)
+    # resolve to cwd+path, so relative_to() would incorrectly return the raw path.
+    # Redact them immediately. On Windows, the normal flow handles them correctly.
+    if so != "Windows" and re.match(r"^[A-Za-z]:[\\/]", path_value):
+        return Path(path_value.replace("\\", "/")).name or "<root hidden>"
+
+    try:
+        absolute_path = Path(path_value).resolve()
+        relative_path = absolute_path.relative_to(project_root)
+        return relative_path.as_posix()
+    except Exception:
+        pass
+
+    if re.match(r"^[A-Za-z]:[\\/]", path_value) or path_value.startswith("/"):
+        return Path(path_value.replace("\\", "/")).name or "<root hidden>"
+
+    return path_value
+
+
+def redact_system_paths(text: str) -> str:
+    def replace_match(match: re.Match) -> str:
+        return sanitize_path(match.group(0))
+
+    text = windows_abs_path_pattern.sub(replace_match, text)
+    text = unix_abs_path_pattern.sub(replace_match, text)
+    return text
+
+
+def _sanitize_traceback_exception(tb_exception: traceback.TracebackException):
+    for frame in tb_exception.stack:
+        frame.filename = sanitize_path(frame.filename)
+
+    if tb_exception.__cause__:
+        _sanitize_traceback_exception(tb_exception.__cause__)
+    if tb_exception.__context__ and not tb_exception.__suppress_context__:
+        _sanitize_traceback_exception(tb_exception.__context__)
+
+
+def format_sanitized_traceback(exc: Optional[BaseException] = None) -> str:
+    if exc is None:
+        exc = sys.exc_info()[1]
+
+    if exc is None:
+        return "No traceback available."
+
+    tb_exception = traceback.TracebackException.from_exception(exc, capture_locals=False)
+    _sanitize_traceback_exception(tb_exception)
+    formatted_traceback = "".join(tb_exception.format()).strip()
+    return redact_system_paths(formatted_traceback)
 
 
 async def api_request(token: Optional[PerfectoToken], method: str, endpoint: str,
@@ -86,6 +160,10 @@ async def http_request(method: str, endpoint: str,
     Make an http request to the Perfecto Webpage.
     """
 
+    endpoint_error = validate_http_request_endpoint(endpoint)
+    if endpoint_error:
+        return BaseResult(error=endpoint_error)
+
     headers = kwargs.pop("headers", {})
     headers["User-Agent"] = user_agent
 
@@ -112,7 +190,7 @@ def get_date_time_iso(timestamp: int) -> Optional[str]:
     if timestamp is None:
         return None
     else:
-        return datetime.fromtimestamp(timestamp).isoformat()
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
 
 def get_resources_path():

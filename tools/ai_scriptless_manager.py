@@ -1,5 +1,4 @@
 import json
-import traceback
 from typing import Optional, Any, Dict
 from urllib.parse import quote
 
@@ -45,7 +44,7 @@ from tools.ai_scriptless_script import (
     format_test_ui_location,
     update_element_arguments,
 )
-from tools.utils import api_request
+from tools.utils import api_request, format_sanitized_traceback
 
 STEP_PATH_REFRESH_NOTES = [
     "step_path values are dot-separated positional paths (e.g. 0, 2.0, 5.b0.1); Perfecto does not persist them.",
@@ -959,9 +958,9 @@ Hints:
             return await run_tool(f"{TOOLS_PREFIX}_ai_scriptless", action, ctx, _dispatch)
         except httpx.HTTPStatusError:
             return BaseResult(
-                error=f"Error: {traceback.format_exc()}"
+                error=f"Error: {format_sanitized_traceback()}"
             )
         except Exception:
             return BaseResult(
-                error=f"Error: {traceback.format_exc()}\n{SUPPORT_MESSAGE}"
+                error=f"Error: {format_sanitized_traceback()}\n{SUPPORT_MESSAGE}"
             )
