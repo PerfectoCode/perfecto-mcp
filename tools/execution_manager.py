@@ -1,4 +1,3 @@
-import traceback
 from datetime import datetime, timedelta
 from typing import Optional, Any, Dict
 
@@ -13,7 +12,7 @@ from formatters.execution import format_executions
 from models.manager import Manager
 from models.result import BaseResult, PaginationResult
 from telemetry import run_tool
-from tools.utils import api_request
+from tools.utils import api_request, format_sanitized_traceback
 
 
 class ExecutionManager(Manager):
@@ -287,9 +286,9 @@ Hints:
             return await run_tool(f"{TOOLS_PREFIX}_execution", action, ctx, _dispatch)
         except httpx.HTTPStatusError:
             return BaseResult(
-                error=f"Error: {traceback.format_exc()}"
+                error=f"Error: {format_sanitized_traceback()}"
             )
         except Exception:
             return BaseResult(
-                error=f"Error: {traceback.format_exc()}\n{SUPPORT_MESSAGE}"
+                error=f"Error: {format_sanitized_traceback()}\n{SUPPORT_MESSAGE}"
             )

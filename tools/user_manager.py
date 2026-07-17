@@ -1,4 +1,3 @@
-import traceback
 from typing import Optional, Any, Dict
 
 import httpx
@@ -12,7 +11,7 @@ from formatters.user import format_users
 from models.manager import Manager
 from models.result import BaseResult
 from telemetry import run_tool
-from tools.utils import api_request
+from tools.utils import api_request, format_sanitized_traceback
 
 
 class UserManager(Manager):
@@ -69,9 +68,9 @@ Hints:
             return await run_tool(f"{TOOLS_PREFIX}_user", action, ctx, _dispatch)
         except httpx.HTTPStatusError:
             return BaseResult(
-                error=f"Error: {traceback.format_exc()}"
+                error=f"Error: {format_sanitized_traceback()}"
             )
         except Exception:
             return BaseResult(
-                error=f"Error: {traceback.format_exc()}\n{SUPPORT_MESSAGE}"
+                error=f"Error: {format_sanitized_traceback()}\n{SUPPORT_MESSAGE}"
             )
