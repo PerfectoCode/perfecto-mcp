@@ -1,5 +1,4 @@
 import asyncio
-import traceback
 from copy import deepcopy
 from itertools import chain
 from typing import Optional, Any, Dict, List
@@ -17,13 +16,17 @@ from models.manager import Manager
 from models.result import BaseResult
 from telemetry import run_tool
 from tools.help_utils import convert_js_to_py_dict
-from tools.utils import http_request
+from tools.utils import http_request, format_sanitized_traceback
 
 
 class HelpManager(Manager):
     help_tree = None  # Static to share between different instance of HelpManager
     help_items_index = {}
     help_index_nodes = {}
+    CONTENT_TRUST = "trusted"
+    CONTENT_TRUST_NOTE = (
+        "Help content is sourced from curated Perfecto documentation domains and is trusted by design."
+    )
 
     def __init__(self, token: Optional[PerfectoToken], ctx: Context):
         super().__init__(token, ctx)
@@ -131,6 +134,10 @@ class HelpManager(Manager):
         )
 
     async def list_help_category_content(self, category_id: str, subcategory_id_list: List[str]) -> BaseResult:
+        if not isinstance(subcategory_id_list, list) or not subcategory_id_list:
+            return BaseResult(
+                error="Missing required argument 'subcategory_id_list'. Please provide a non-empty list."
+            )
         if HelpManager.help_tree is None:
             await self._load_help_tree()
         results = []
@@ -147,6 +154,10 @@ class HelpManager(Manager):
         )
 
     async def read_help_info(self, category_id: str, subcategory_id: str, help_id_list: List[str]) -> BaseResult:
+        if not isinstance(help_id_list, list) or not help_id_list:
+            return BaseResult(
+                error="Missing required argument 'help_id_list'. Please provide a non-empty list."
+            )
         if HelpManager.help_tree is None:
             await self._load_help_tree()
         results = []
@@ -181,8 +192,14 @@ class HelpManager(Manager):
 
                 help_object["help_result"] = result.result
             except httpx.HTTPStatusError as e:
-                help_object["help_result"] = f"Error:{e.response.text}"
+                status_code = e.response.status_code
+                reason_phrase = e.response.reason_phrase
+                help_object["help_result"] = (
+                    f"Error: HTTP {status_code} {reason_phrase}"
+                )
 
+            help_object["content_trust"] = HelpManager.CONTENT_TRUST
+            help_object["content_trust_note"] = HelpManager.CONTENT_TRUST_NOTE
             results.append(help_object)
 
         return BaseResult(
@@ -190,6 +207,8 @@ class HelpManager(Manager):
                 "category_id": category_id,
                 "subcategory_id": subcategory_id,
                 "help_results": results,
+                "content_trust": HelpManager.CONTENT_TRUST,
+                "content_trust_note": HelpManager.CONTENT_TRUST_NOTE,
             },
         )
 
@@ -260,12 +279,16 @@ Hints:
                 case "list_help_categories":
                     return await help_manager.list_help_categories()
                 case "list_help_category_content":
-                    return await help_manager.list_help_category_content(args.get("category_id", "home"),
-                                                                         args.get("subcategory_id_list", []))
+                    return await help_manager.list_help_category_content(
+                        args.get("category_id", "home"),
+                        args.get("subcategory_id_list"),
+                    )
                 case "read_help_info":
-                    return await help_manager.read_help_info(args.get("category_id", "home"),
-                                                             args.get("subcategory_id", ""),
-                                                             args.get("help_id_list", []))
+                    return await help_manager.read_help_info(
+                        args.get("category_id", "home"),
+                        args.get("subcategory_id", ""),
+                        args.get("help_id_list"),
+                    )
                 case "list_real_devices_extended_commands":
                     return await help_manager.list_real_devices_extended_commands()
                 case "read_real_devices_extended_command_info":
@@ -279,9 +302,9 @@ Hints:
             return await run_tool(f"{TOOLS_PREFIX}_help", action, ctx, _dispatch)
         except httpx.HTTPStatusError:
             return BaseResult(
-                error=f"Error: {traceback.format_exc()}"
+                error=f"Error: {format_sanitized_traceback()}"
             )
         except Exception:
             return BaseResult(
-                error=f"Error: {traceback.format_exc()}\n{SUPPORT_MESSAGE}"
+                error=f"Error: {format_sanitized_traceback()}\n{SUPPORT_MESSAGE}"
             )
