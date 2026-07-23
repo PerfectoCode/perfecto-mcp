@@ -281,6 +281,9 @@ def list_skill_resources_uri(skill_name: str) -> List[str]:
     for file_path in skill_path.rglob("*"):
         if file_path.is_file():
             url = file_path.relative_to(skill_path).as_posix()
+            # Keep skill-creator eval fixtures out of agent-facing resource lists
+            if url == "evals" or url.startswith("evals/"):
+                continue
             skill_resources.append(f"{SKILL_PREFIX}{skill_name}://{url}")
     return skill_resources
 
