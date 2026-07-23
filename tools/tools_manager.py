@@ -16,6 +16,7 @@ from config.perfecto import (
     TOOLS_PREFIX,
     WEBSITE,
 )
+from config.platform_names import normalize_arch, normalize_system
 from config.token import PerfectoToken
 from config.version import __bundle__, __executable__, __uvx__, __version__
 from models.manager import Manager
@@ -26,8 +27,6 @@ from update.processes import find_other_instances
 from update.release import (
     latest_release_from_payload,
     match_recommended_asset,
-    normalize_arch,
-    normalize_system,
 )
 
 
@@ -204,8 +203,8 @@ class ToolsManager(Manager):
 
     async def update_status(self) -> BaseResult:
         runtime = _detect_runtime()
-        guidance = describe_manual_update_instructions()
         others = find_other_instances()
+        guidance = describe_manual_update_instructions(others=others)
         info = [
             "This MCP session must be quit before a frozen binary can be replaced.",
             "Use this report to guide the user through a double-click / `--update` install.",

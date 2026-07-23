@@ -21,9 +21,6 @@ from config.http import timeout, user_agent
 from models.result import BaseResult
 
 so = platform.system()  # "Windows", "Linux", "Darwin"
-version = platform.version()  # kernel / build version
-release = platform.release()  # ex. "10", "5.15.0-76-generic"
-machine = platform.machine()  # ex. "x86_64", "AMD64", "arm64"
 project_root = Path(__file__).resolve().parent.parent
 # Match Windows absolute paths (backslash or forward slash; latter may appear on POSIX).
 # Negative lookbehind ensures we don't match URL protocols like https:// (where the

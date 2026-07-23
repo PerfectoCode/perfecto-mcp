@@ -5,7 +5,7 @@ import os
 import sys
 from typing import Literal, cast
 
-from mcp.server.fastmcp import FastMCP, Icon
+from mcp.server.fastmcp import FastMCP
 
 from config.perfecto import SECURITY_TOKEN_FILE_ENV_NAME, SECURITY_TOKEN_ENV_NAME, PERFECTO_CLOUD_NAME_ENV_NAME, \
     GITHUB

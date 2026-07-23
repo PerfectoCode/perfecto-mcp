@@ -56,6 +56,28 @@ def _unix_wait_and_log_header(*, pid: int, log_file: Path) -> str:
         while kill -0 {pid} 2>/dev/null; do
           sleep 1
         done
+        echo "Ensuring no other Perfecto MCP processes remain..."
+        SELF_PID=$$
+        while true; do
+          FOUND=0
+          while read -r OPID OCMD; do
+            [ -z "${{OPID:-}}" ] && continue
+            [ "$OPID" = "$SELF_PID" ] && continue
+            case "$OCMD" in
+              *{BINARY_NAME}-install-*) continue ;;
+              *tee\\ -a*\"$LOG_FILE\"*|*"$LOG_FILE"*) continue ;;
+            esac
+            case "$OCMD" in
+              */Contents/MacOS/{BINARY_NAME}*|*/{BINARY_NAME}\\ --*|*/{BINARY_NAME}|*/{BINARY_NAME}.exe*)
+                FOUND=1
+                break
+                ;;
+            esac
+          done < <(ps -ax -o pid=,command= 2>/dev/null || true)
+          [ "$FOUND" -eq 0 ] && break
+          echo "Waiting for remaining Perfecto MCP processes to exit..."
+          sleep 1
+        done
         """
     )
 
@@ -196,6 +218,13 @@ def _windows_script(*, pid: int, source: Path, target: Path, log_file: Path) -> 
         if not errorlevel 1 (
           timeout /t 1 /nobreak >NUL
           goto waitloop
+        )
+        echo Ensuring no other Perfecto MCP processes remain...>>"%LOG_FILE%"
+        :waitothers
+        tasklist /FI "IMAGENAME eq {BINARY_NAME}*" 2>NUL | find /I "{BINARY_NAME}" >NUL
+        if not errorlevel 1 (
+          timeout /t 1 /nobreak >NUL
+          goto waitothers
         )
         set "SRC={source_q}"
         set "DST={target_q}"
