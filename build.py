@@ -99,6 +99,11 @@ def run_pyinstaller(name: str, icon: str):
         "tools.ai_scriptless.step_path",
         "tools.ai_scriptless.tree",
         "tools.ai_scriptless.variables",
+        "update",
+        "update.flow",
+        "update.install",
+        "update.processes",
+        "update.release",
     ]
     PyInstaller.__main__.run([
         'main.py',

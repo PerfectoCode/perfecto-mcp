@@ -17,22 +17,13 @@ import httpx
 
 from config.security import validate_http_request_endpoint
 from config.token import PerfectoToken
-from config.version import __version__
+from config.http import timeout, user_agent
 from models.result import BaseResult
 
 so = platform.system()  # "Windows", "Linux", "Darwin"
 version = platform.version()  # kernel / build version
 release = platform.release()  # ex. "10", "5.15.0-76-generic"
 machine = platform.machine()  # ex. "x86_64", "AMD64", "arm64"
-
-ua_part = f"{so} {release}; {machine}"
-user_agent = f"perfecto-mcp/{__version__} ({ua_part})"
-timeout = httpx.Timeout(
-    connect=15.0,
-    read=60.0,
-    write=15.0,
-    pool=60.0
-)
 project_root = Path(__file__).resolve().parent.parent
 # Match Windows absolute paths (backslash or forward slash; latter may appear on POSIX).
 # Negative lookbehind ensures we don't match URL protocols like https:// (where the

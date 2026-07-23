@@ -2,13 +2,13 @@ import os
 import platform
 import sys
 import traceback
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 from mcp.server.fastmcp import Context
-from packaging.version import InvalidVersion, Version
 from pydantic import Field
 
+from config.http import timeout, user_agent
 from config.perfecto import (
     GITHUB,
     GITHUB_API_LATEST_RELEASE,
@@ -21,32 +21,14 @@ from config.version import __bundle__, __executable__, __uvx__, __version__
 from models.manager import Manager
 from models.result import BaseResult
 from telemetry import run_tool
-from tools.utils import timeout, user_agent
-
-
-def _normalize_system(system: str) -> str:
-    system = system.lower()
-    if system == "darwin":
-        return "macos"
-    if system == "windows":
-        return "windows"
-    return "linux"
-
-
-def _normalize_arch(machine: str) -> str:
-    machine = machine.lower()
-    if machine in {"x86_64", "amd64"}:
-        return "amd64"
-    if machine in {"aarch64", "arm64"} or machine.startswith("arm"):
-        return "arm64"
-    return machine
-
-
-def _parse_version(value: str) -> Optional[Version]:
-    try:
-        return Version(str(value).lstrip("vV"))
-    except InvalidVersion:
-        return None
+from update.flow import describe_manual_update_instructions
+from update.processes import find_other_instances
+from update.release import (
+    latest_release_from_payload,
+    match_recommended_asset,
+    normalize_arch,
+    normalize_system,
+)
 
 
 def _detect_runtime() -> Dict[str, Any]:
@@ -64,29 +46,20 @@ def _platform_info() -> Dict[str, str]:
         "system": platform.system(),
         "release": platform.release(),
         "machine": platform.machine(),
-        "normalized_system": _normalize_system(platform.system()),
-        "normalized_arch": _normalize_arch(platform.machine()),
+        "normalized_system": normalize_system(platform.system()),
+        "normalized_arch": normalize_arch(platform.machine()),
     }
-
-
-def _match_recommended_asset(assets: List[Dict[str, Any]], system: str, arch: str) -> Optional[Dict[str, Any]]:
-    prefix = f"perfecto-mcp-{system}-{arch}"
-    exact = [
-        asset for asset in assets
-        if str(asset.get("name", "")).startswith(prefix)
-    ]
-    if exact:
-        # Prefer zip packages when multiple assets share the same platform prefix.
-        zip_assets = [asset for asset in exact if str(asset.get("name", "")).endswith(".zip")]
-        return zip_assets[0] if zip_assets else exact[0]
-    return None
 
 
 def _releases_url() -> str:
     return f"{GITHUB}/releases"
 
 
-def _update_guidance(runtime: Dict[str, Any], update_available: bool, recommended_asset: Optional[Dict[str, Any]]) -> Dict[str, str]:
+def _update_guidance(
+    runtime: Dict[str, Any],
+    update_available: bool,
+    recommended_asset: Optional[Dict[str, Any]],
+) -> Dict[str, str]:
     releases_url = _releases_url()
     manual = (
         f"Download the package for your platform from {releases_url}, "
@@ -108,10 +81,19 @@ def _update_guidance(runtime: Dict[str, Any], update_available: bool, recommende
             f"Update the MCP client config git ref to the latest release tag "
             f"(for example `git+{GITHUB}.git@v<latest_version>`) and restart the MCP client."
         )
+    elif runtime.get("frozen"):
+        automatic = (
+            "In-place update is manual and must not run while this MCP server is still attached. "
+            "Ask the user to quit Perfecto MCP in every MCP client, confirm no other Perfecto MCP "
+            "processes are running (action `update_status`), then double-click the app / run the "
+            "binary without `--mcp` (or with `--update`) and follow the on-screen installer. "
+            "MCP clients usually reconnect after the process exits and the new binary is in place."
+        )
     else:
         automatic = (
-            "Automatic in-place update is not available yet. "
-            "Use the manual download path above, or ask the AI to guide a controlled manual replace."
+            "This runtime is not a frozen binary build. Update from source by checking out the "
+            f"latest release tag from {releases_url}, reinstalling dependencies, and restarting "
+            "the MCP client. The `--update` installer only applies to PyInstaller builds."
         )
 
     if not update_available:
@@ -220,6 +202,45 @@ class ToolsManager(Manager):
             ],
         )
 
+    async def update_status(self) -> BaseResult:
+        runtime = _detect_runtime()
+        guidance = describe_manual_update_instructions()
+        others = find_other_instances()
+        info = [
+            "This MCP session must be quit before a frozen binary can be replaced.",
+            "Use this report to guide the user through a double-click / `--update` install.",
+        ]
+        if others:
+            info.append(
+                f"Found {len(others)} other Perfecto MCP process(es). "
+                "Ask the user to quit MCP clients / close those terminals before updating."
+            )
+        else:
+            info.append(
+                "No other Perfecto MCP binaries were detected besides this session "
+                "(IDE helpers that only mention the repo name are ignored)."
+            )
+
+        if runtime.get("docker"):
+            info.append("Docker runtimes should pull a new image rather than using the binary updater.")
+        elif runtime.get("uvx"):
+            info.append("uvx runtimes should bump the git ref in MCP config rather than using the binary updater.")
+        elif not runtime.get("frozen"):
+            info.append(
+                "This runtime is not frozen; the `--update` installer does not apply. "
+                "Use a source/git update instead."
+            )
+
+        return BaseResult(
+            result=[{
+                "current_version": __version__,
+                "platform": _platform_info(),
+                "runtime": runtime,
+                "manual_update": guidance,
+            }],
+            info=info,
+        )
+
     async def check_updates(self) -> BaseResult:
         headers = {
             "User-Agent": user_agent,
@@ -231,55 +252,43 @@ class ToolsManager(Manager):
             try:
                 resp = await client.get(GITHUB_API_LATEST_RELEASE, headers=headers)
                 resp.raise_for_status()
-                release = resp.json()
+                payload = resp.json()
             except httpx.HTTPError as exc:
                 return _github_access_failure_result(exc)
             except Exception as exc:
                 return _github_access_failure_result(exc)
 
-        tag_name = str(release.get("tag_name") or "")
-        latest_version = tag_name.lstrip("vV") or str(release.get("name") or "")
-        current = _parse_version(__version__)
-        latest = _parse_version(latest_version)
-
-        if current is None or latest is None:
-            return BaseResult(
-                error=(
-                    f"Unable to compare versions. "
-                    f"current={__version__!r}, latest={latest_version!r}."
-                )
-            )
-
-        update_available = latest > current
-        assets = [
-            {
-                "name": asset.get("name"),
-                "browser_download_url": asset.get("browser_download_url"),
-                "size": asset.get("size"),
-                "content_type": asset.get("content_type"),
-                "updated_at": asset.get("updated_at"),
-            }
-            for asset in (release.get("assets") or [])
-        ]
+        try:
+            release = latest_release_from_payload(payload, current_version=__version__)
+        except ValueError as exc:
+            return BaseResult(error=str(exc))
 
         platform_data = _platform_info()
         runtime = _detect_runtime()
-        recommended_asset = _match_recommended_asset(
-            assets,
+        # Re-match with this host's normalized platform (same helper as the interactive updater).
+        recommended_asset = match_recommended_asset(
+            release.assets,
             platform_data["normalized_system"],
             platform_data["normalized_arch"],
         )
-        guidance = _update_guidance(runtime, update_available, recommended_asset)
+        guidance = _update_guidance(runtime, release.update_available, recommended_asset)
 
         info = []
-        if update_available:
+        if release.update_available:
             info.append(
-                f"Update available: current {__version__} -> latest {latest_version}."
+                f"Update available: current {__version__} -> latest {release.latest_version}."
             )
-            info.append(
-                "Share the release notes with the user and ask whether they want a manual "
-                "update now or guidance for an automatic update path."
-            )
+            if runtime.get("frozen"):
+                info.append(
+                    "Share the release notes with the user. Guide a manual update via "
+                    "double-click / `--update` (never overwrite files while MCP is live). "
+                    "Use action `update_status` to list other running Perfecto MCP processes first."
+                )
+            else:
+                info.append(
+                    "Share the release notes and the manual download guidance. "
+                    "The in-place `--update` installer applies only to frozen binary builds."
+                )
             if recommended_asset:
                 info.append(
                     f"Recommended download for this host: {recommended_asset.get('name')}."
@@ -294,18 +303,18 @@ class ToolsManager(Manager):
 
         return BaseResult(
             result=[{
-                "current_version": __version__,
-                "latest_version": latest_version,
-                "update_available": update_available,
+                "current_version": release.current_version,
+                "latest_version": release.latest_version,
+                "update_available": release.update_available,
                 "release": {
-                    "tag_name": tag_name,
-                    "name": release.get("name"),
-                    "html_url": release.get("html_url"),
-                    "published_at": release.get("published_at"),
-                    "body": release.get("body") or "",
+                    "tag_name": release.tag_name,
+                    "name": payload.get("name"),
+                    "html_url": release.html_url,
+                    "published_at": payload.get("published_at"),
+                    "body": release.body,
                 },
                 "recommended_asset": recommended_asset,
-                "assets": assets,
+                "assets": release.assets,
                 "platform": platform_data,
                 "runtime": runtime,
                 "update_guidance": guidance,
@@ -324,10 +333,14 @@ Actions:
   user-agent and `--version` / console display.
 - check_updates: Query the GitHub repository for the latest release, compare it with the
   current version, and return release notes plus download links when an update is available.
+- update_status: List other running Perfecto MCP processes and return step-by-step manual
+  update instructions (double-click / `--update`). Does not download or replace files.
 Hints:
 - Prefer `version` first when the user asks what build they are running.
 - Prefer `check_updates` when the user asks whether a newer MCP release exists.
-- When an update is available, present release notes and ask before replacing the executable.
+- When an update is available for a frozen binary, present release notes, call `update_status`,
+  and guide the user to quit MCP clients then double-click the app / run `--update`.
+  Do not attempt to overwrite the running executable from inside the MCP session.
 - If GitHub is unreachable (restricted network, firewall, timeout), explain that the update
   check is unavailable, still share the current version, and point to the releases page for a
   manual check — do not treat it as a hard failure.
@@ -349,6 +362,8 @@ Hints:
                     return await tools_manager.version()
                 case "check_updates":
                     return await tools_manager.check_updates()
+                case "update_status":
+                    return await tools_manager.update_status()
                 case _:
                     return BaseResult(
                         error=f"Action {action} not found in tools manager tool"

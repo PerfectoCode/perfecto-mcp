@@ -20,10 +20,8 @@ import httpx
 
 from tools.tools_manager import (
     ToolsManager,
-    _match_recommended_asset,
-    _normalize_arch,
-    _normalize_system,
 )
+from update.release import match_recommended_asset, normalize_arch, normalize_system
 
 
 def _make_ctx():
@@ -46,13 +44,13 @@ def test_version_returns_current_build_metadata(perfecto_token):
 
 
 def test_normalize_platform_helpers():
-    assert _normalize_system("Darwin") == "macos"
-    assert _normalize_system("Windows") == "windows"
-    assert _normalize_system("Linux") == "linux"
-    assert _normalize_arch("x86_64") == "amd64"
-    assert _normalize_arch("amd64") == "amd64"
-    assert _normalize_arch("arm64") == "arm64"
-    assert _normalize_arch("aarch64") == "arm64"
+    assert normalize_system("Darwin") == "macos"
+    assert normalize_system("Windows") == "windows"
+    assert normalize_system("Linux") == "linux"
+    assert normalize_arch("x86_64") == "amd64"
+    assert normalize_arch("amd64") == "amd64"
+    assert normalize_arch("arm64") == "arm64"
+    assert normalize_arch("aarch64") == "arm64"
 
 
 def test_match_recommended_asset_prefers_zip():
@@ -66,7 +64,7 @@ def test_match_recommended_asset_prefers_zip():
             "browser_download_url": "https://example.com/zip",
         },
     ]
-    matched = _match_recommended_asset(assets, "macos", "arm64")
+    matched = match_recommended_asset(assets, "macos", "arm64")
     assert matched["name"] == "perfecto-mcp-macos-arm64.zip"
 
 
@@ -97,10 +95,21 @@ def test_check_updates_when_latest_is_newer(perfecto_token):
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
+    runtime = {
+        "frozen": True,
+        "uvx": False,
+        "docker": False,
+        "executable": "/tmp/perfecto-mcp",
+        "bundle": "/tmp/perfecto-mcp.app",
+    }
+
     with patch("tools.tools_manager.httpx.AsyncClient", return_value=mock_client), \
             patch("tools.tools_manager.__version__", "1.0.0"), \
             patch("tools.tools_manager.platform.system", return_value="Darwin"), \
-            patch("tools.tools_manager.platform.machine", return_value="arm64"):
+            patch("tools.tools_manager.platform.machine", return_value="arm64"), \
+            patch("update.release.platform.system", return_value="Darwin"), \
+            patch("update.release.platform.machine", return_value="arm64"), \
+            patch("tools.tools_manager._detect_runtime", return_value=runtime):
         manager = ToolsManager(perfecto_token, _make_ctx())
         result = asyncio.run(manager.check_updates())
 
@@ -112,6 +121,42 @@ def test_check_updates_when_latest_is_newer(perfecto_token):
     assert payload["release"]["body"] == "Release notes for 9.9.9"
     assert payload["recommended_asset"]["name"] == "perfecto-mcp-macos-arm64.zip"
     assert payload["update_guidance"]["status"] == "update_available"
+    assert "double-click" in payload["update_guidance"]["automatic"].lower()
+    assert any("update_status" in message for message in result.info)
+
+
+def test_check_updates_source_runtime_guidance(perfecto_token):
+    release = {
+        "tag_name": "v9.9.9",
+        "name": "v9.9.9",
+        "html_url": "https://github.com/PerfectoCode/perfecto-mcp/releases/tag/v9.9.9",
+        "published_at": "2026-07-14T00:00:00Z",
+        "body": "notes",
+        "assets": [],
+    }
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value=release)
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    runtime = {
+        "frozen": False,
+        "uvx": False,
+        "docker": False,
+        "executable": "main.py",
+        "bundle": "main.py",
+    }
+    with patch("tools.tools_manager.httpx.AsyncClient", return_value=mock_client), \
+            patch("tools.tools_manager.__version__", "1.0.0"), \
+            patch("tools.tools_manager._detect_runtime", return_value=runtime):
+        result = asyncio.run(ToolsManager(perfecto_token, _make_ctx()).check_updates())
+
+    automatic = result.result[0]["update_guidance"]["automatic"].lower()
+    assert "frozen" in automatic or "source" in automatic
+    assert "double-click" not in automatic
 
 
 def test_check_updates_when_up_to_date(perfecto_token):
