@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import platform
 import sys
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 import httpx
 
 from config.perfecto import GITHUB
 from config.version import __bundle__, __executable__, __uvx__, __version__
 from update.install import install_target_path, update_log_path, write_and_spawn_installer
-from update.processes import find_other_instances, format_process_list
+from update.processes import RunningProcess, find_other_instances, format_process_list
 from update.release import fetch_latest_release, stage_update_from_asset
 
 
@@ -127,9 +128,18 @@ def run_interactive_update(*, prompt: Optional[PromptFn] = None, auto_confirm: b
         print(f" Download/extract failed: {exc}")
         return 1
 
+    # Re-check immediately before spawn — a client may have reconnected during download.
+    if find_other_instances():
+        print(" Perfecto MCP started again during download. Close it, then re-run the updater.")
+        return 1
+
     print(f" Staged payload: {staged}")
-    print(" Launching install helper in a new Terminal window.")
-    print(" It waits for this process to exit, replaces the app, then relaunches it.")
+    if platform.system() == "Darwin":
+        print(" Launching install helper in a new Terminal window.")
+    else:
+        print(" Launching background install helper (progress is written to the log file).")
+    print(" It waits for this process (and any other Perfecto MCP processes) to exit,")
+    print(" then replaces the app and relaunches it.")
     script = write_and_spawn_installer(source=staged)
     print(f" Install script: {script}")
     print(f" Install log: {update_log_path()}")
@@ -137,10 +147,14 @@ def run_interactive_update(*, prompt: Optional[PromptFn] = None, auto_confirm: b
     return 0
 
 
-def describe_manual_update_instructions() -> dict:
+def describe_manual_update_instructions(
+    *,
+    others: Optional[List[RunningProcess]] = None,
+) -> dict:
     """Structured guidance for MCP tools / agents."""
     supported, reason = _runtime_supports_inplace_update()
-    others = find_other_instances()
+    if others is None:
+        others = find_other_instances()
     target = str(install_target_path())
     if sys.platform == "darwin" and str(__bundle__).endswith(".app"):
         launch_hint = (

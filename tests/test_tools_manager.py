@@ -21,7 +21,8 @@ import httpx
 from tools.tools_manager import (
     ToolsManager,
 )
-from update.release import match_recommended_asset, normalize_arch, normalize_system
+from config.platform_names import normalize_arch, normalize_system
+from update.release import match_recommended_asset
 
 
 def _make_ctx():

@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import platform
 import re
-import shutil
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -17,28 +16,11 @@ from packaging.version import InvalidVersion, Version
 
 from config.http import timeout, user_agent
 from config.perfecto import GITHUB, GITHUB_API_LATEST_RELEASE
+from config.platform_names import normalize_arch, normalize_system
 from config.version import __version__
 
 BINARY_NAME = "perfecto-mcp"
 APPLEDOUBLE_DIR = "__MACOSX"
-
-
-def normalize_system(system: str) -> str:
-    system = system.lower()
-    if system == "darwin":
-        return "macos"
-    if system == "windows":
-        return "windows"
-    return "linux"
-
-
-def normalize_arch(machine: str) -> str:
-    machine = machine.lower()
-    if machine in {"x86_64", "amd64"}:
-        return "amd64"
-    if machine in {"aarch64", "arm64"} or machine.startswith("arm"):
-        return "arm64"
-    return machine
 
 
 def parse_version(value: str) -> Optional[Version]:

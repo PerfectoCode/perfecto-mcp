@@ -10,6 +10,8 @@ from pathlib import Path
 
 import PyInstaller.__main__
 
+from config.platform_names import normalize_arch, normalize_system
+
 sep = os.pathsep
 
 
@@ -66,17 +68,11 @@ VSVersionInfo(
 
 
 def normalize_architecture(arch: str) -> str:
-    if arch in ['x86_64', 'amd64']:
-        return 'amd64'
-    elif arch in ['aarch64', 'arm64']:
-        return 'arm64'
-    elif arch.startswith('arm'):
-        return 'arm64'
-    return arch
+    return normalize_arch(arch)
 
 
 def normalize_system_name(system: str) -> str:
-    return "macos" if system == 'darwin' else system
+    return normalize_system(system)
 
 
 def get_binary_name(system: str, arch: str) -> str:

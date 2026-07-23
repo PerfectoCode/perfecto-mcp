@@ -191,6 +191,7 @@ def test_write_and_spawn_installer_unix(tmp_path: Path, monkeypatch):
     assert str(source.resolve()) in content
     assert str(target.resolve()) in content
     assert "restoring backup" in content.lower()
+    assert "Ensuring no other Perfecto MCP processes remain" in content
     assert spawned["cmd"][0] == "nohup"
     assert "/bin/bash" in spawned["cmd"]
 
