@@ -26,6 +26,11 @@ class PerfectoToken:
     __slots__ = ("token", "cloud_name")
 
     def __init__(self, token: str, cloud_name: str):
+        if not token or not isinstance(token, str):
+            raise PerfectoTokenError("Invalid security token format: expected non-empty string")
+        if cloud_name is not None and (not isinstance(cloud_name, str) or not cloud_name):
+            raise PerfectoTokenError("Invalid cloud name format: expected non-empty string")
+
         self.token = token
         self.cloud_name = cloud_name
 
@@ -34,20 +39,18 @@ class PerfectoToken:
     def from_file(cls, path: Union[str, Path], cloud_name: str) -> "PerfectoToken":
         p = Path(path)
         if not p.exists() or not p.is_file():
-            raise PerfectoTokenError(f"directory or file does not exist: {p!r}")
+            raise PerfectoTokenError("Token file does not exist or is not a file")
 
         try:
             raw = p.read_text(encoding="utf-8")
         except Exception as e:
-            raise PerfectoTokenError(f"Error reading/parsing file at {p!r}: {e}") from e
+            raise PerfectoTokenError(f"Error reading token file: {type(e).__name__}") from e
 
-        try:
-            token_val = raw
-            cloud_name_val = cloud_name
-        except KeyError as e:
-            raise PerfectoTokenError(f"missing field {e.args[0]!r} at {p!r}") from e
+        token_val = raw.strip()
+        if not token_val:
+            raise PerfectoTokenError("Token file is empty")
 
-        return cls(token=token_val, cloud_name=cloud_name_val)
+        return cls(token=token_val, cloud_name=cloud_name)
 
     def __repr__(self):
-        return f"<PerfectoToken cloud_name={self.cloud_name!r} token={'*' * 8}>"
+        return "<PerfectoToken cloud_name=******** token=********>"
