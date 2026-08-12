@@ -5,7 +5,7 @@ import os
 import sys
 from typing import Literal, cast
 
-from mcp.server.fastmcp import FastMCP, Icon
+from mcp.server.fastmcp import FastMCP
 
 from config.perfecto import SECURITY_TOKEN_FILE_ENV_NAME, SECURITY_TOKEN_ENV_NAME, PERFECTO_CLOUD_NAME_ENV_NAME, \
     GITHUB
@@ -29,6 +29,19 @@ def init_logging(level_name: str) -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         stream=sys.stderr,
         force=True,
+    )
+
+
+def _banner() -> str:
+    return (
+        "  _____           __          _        \n"
+        " |  __ \\         / _|        | |       \n"
+        " | |__) |__ _ __| |_ ___  ___| |_ ___  \n"
+        " |  ___/ _ \\ '__|  _/ _ \\/ __| __/ _ \\ \n"
+        " | |  |  __/ |  | ||  __/ (__| || (_) |\n"
+        " |_|   \\___|_|  |_| \\___|\\___|\\__\\___/ \n"
+        "                                       \n"
+        f" Perfecto MCP Server v{__version__} \n"
     )
 
 
@@ -94,6 +107,12 @@ def main():
     )
 
     parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Run the interactive manual updater (frozen binary builds only)"
+    )
+
+    parser.add_argument(
         "--log-level",
         default="CRITICAL",  # By default, only critical errors
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -105,18 +124,15 @@ def main():
     if args.mcp:
         init_logging(args.log_level)
         run(log_level=args.log_level.upper())
+    elif args.update:
+        from update.flow import run_interactive_update
+
+        logo_ascii = _banner()
+        print(logo_ascii)
+        raise SystemExit(run_interactive_update())
     else:
 
-        logo_ascii = (
-            "  _____           __          _        \n"
-            " |  __ \         / _|        | |       \n"
-            " | |__) |__ _ __| |_ ___  ___| |_ ___  \n"
-            " |  ___/ _ \ '__|  _/ _ \/ __| __/ _ \ \n"
-            " | |  |  __/ |  | ||  __/ (__| || (_) |\n"
-            " |_|   \___|_|  |_| \___|\___|\__\___/ \n"
-            "                                       \n"
-            f" Perfecto MCP Server v{__version__} \n"
-        )
+        logo_ascii = _banner()
         print(logo_ascii)
 
         if PERFECTO_CLOUD_NAME is None:
@@ -129,9 +145,9 @@ def main():
         else:
             command_path = __executable__
         command = "uvx" if __uvx__ else command_path
-        args = ["--mcp"]
+        mcp_args = ["--mcp"]
         if __uvx__:
-            args = [
+            mcp_args = [
                 "--from", f"git+{GITHUB}.git@v{get_version()}",
                 "-q", "perfecto-mcp",
                 "--mcp"
@@ -140,7 +156,7 @@ def main():
         config_dict = {
             "Perfecto MCP": {
                 "command": f"{command}",
-                "args": args,
+                "args": mcp_args,
                 "env": {
                     f"{PERFECTO_CLOUD_NAME_ENV_NAME}": f"{perfecto_environment_str}"
                 }
@@ -171,7 +187,17 @@ def main():
         print(" https://github.com/PerfectoCode/perfecto-mcp/")
         print(" ")
 
-        input("Press Enter to exit...")
+        if getattr(sys, "frozen", False) and not __uvx__:
+            print(" Updates:")
+            print("  To install a newer Perfecto MCP build, quit every MCP client using this server,")
+            print("  then re-run this app with --update (or choose Update below) and follow the prompts.")
+            print(" ")
+            choice = input("Press Enter to exit, or type 'u' + Enter to check for updates: ").strip().lower()
+            if choice in {"u", "update"}:
+                from update.flow import run_interactive_update
+                raise SystemExit(run_interactive_update())
+        else:
+            input("Press Enter to exit...")
 
 
 if __name__ == "__main__":
