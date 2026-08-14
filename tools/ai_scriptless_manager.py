@@ -44,7 +44,7 @@ from tools.ai_scriptless_script import (
     format_test_ui_location,
     update_element_arguments,
 )
-from tools.utils import api_request, format_sanitized_traceback
+from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
 
 STEP_PATH_REFRESH_NOTES = [
     "step_path values are dot-separated positional paths (e.g. 0, 2.0, 5.b0.1); Perfecto does not persist them.",
@@ -247,7 +247,7 @@ class AiScriptlessManager(Manager):
             self,
             test_id: str,
             command_id: str,
-            arguments: Optional[dict[str, Any]] = None,
+            cmd_arguments: Optional[dict[str, Any]] = None,
             after_path: Optional[str] = None,
             parent_path: Optional[str] = None,
     ) -> BaseResult:
@@ -256,7 +256,7 @@ class AiScriptlessManager(Manager):
         if not command_id:
             return BaseResult(error="command_id is required (from list_commands)")
 
-        element = build_flow_element(command_id, arguments)
+        element = build_flow_element(command_id, cmd_arguments)
         inserted_path: dict[str, Optional[str]] = {"step_path": None}
 
         def mutator(script: dict[str, Any]) -> None:
@@ -271,20 +271,20 @@ class AiScriptlessManager(Manager):
         return _append_step_path_refresh_notes(result)
 
     @token_verify
-    async def modify_command(self, test_id: str, step_path: str, arguments: dict[str, Any]) -> BaseResult:
+    async def modify_command(self, test_id: str, step_path: str, cmd_arguments: dict[str, Any]) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
         if not step_path:
             return BaseResult(error="step_path is required (from view_test_structure)")
-        if not arguments:
-            return BaseResult(error="arguments is required")
+        if not cmd_arguments:
+            return BaseResult(error="cmd_arguments is required")
 
         def mutator(script: dict[str, Any]) -> None:
             located = find_element_by_path(script, step_path)
             if located is None:
                 raise ValueError(f"step_path not found: {step_path}")
             _, _, element = located
-            update_element_arguments(element, arguments)
+            update_element_arguments(element, cmd_arguments)
 
         return _append_step_path_refresh_notes(
             await load_and_mutate(self.token, test_id, mutator)
@@ -681,14 +681,14 @@ Actions:
     args(dict): Dictionary with the following parameters:
         test_id (str, required): Test itemKey from list_tests.
         command_id (str, required): Command ID from list_commands.
-        arguments (dict, optional): Command argument names to values.
+        cmd_arguments (dict, optional): Command argument names to values.
         after_path (str, optional): Insert after this step (step_path from view_test_structure).
         parent_path (str, optional): Insert inside a container (step_path of LogicalStep, Loop, or Branch).
 - modify_command: Update command arguments and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
         step_path (str): Step path from view_test_structure (e.g. 0, 2.0, 5.b0.1).
-        arguments (dict): Argument names to new values.
+        cmd_arguments (dict): Argument names to new values.
 - delete_command: Remove a command from a test and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
@@ -811,10 +811,10 @@ Hints:
 """
     )
     async def ai_scriptless(
-            action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
+            arguments: Dict[str, Any] = Field(description="Dictionary with arguments", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
+        action, args = normalize_action_args(arguments)
         if args is None:
             args = {}
         ai_scriptless_manager = AiScriptlessManager(token, ctx)
@@ -839,7 +839,7 @@ Hints:
                     return await ai_scriptless_manager.add_command(
                         args.get("test_id", ""),
                         args.get("command_id", ""),
-                        args.get("arguments"),
+                        args.get("cmd_arguments"),
                         args.get("after_path"),
                         args.get("parent_path"),
                     )
@@ -847,7 +847,7 @@ Hints:
                     return await ai_scriptless_manager.modify_command(
                         args.get("test_id", ""),
                         args.get("step_path", ""),
-                        args.get("arguments", {}),
+                        args.get("cmd_arguments", {}),
                     )
                 case "delete_command":
                     return await ai_scriptless_manager.delete_command(
