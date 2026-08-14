@@ -12,7 +12,7 @@ from formatters.execution import format_executions
 from models.manager import Manager
 from models.result import BaseResult, PaginationResult
 from telemetry import run_tool
-from tools.utils import api_request, format_sanitized_traceback
+from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
 
 
 class ExecutionManager(Manager):
@@ -255,10 +255,10 @@ Hints:
 """
     )
     async def execution(
-            action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
+            arguments: Dict[str, Any] = Field(description="Dictionary with arguments", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
+        action, args = normalize_action_args(arguments)
         if args is None:
             args = {}
         execution_manager = ExecutionManager(token, ctx)
