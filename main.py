@@ -20,6 +20,7 @@ PERFECTO_SECURITY_TOKEN = os.getenv(SECURITY_TOKEN_ENV_NAME)
 PERFECTO_CLOUD_NAME = os.getenv(PERFECTO_CLOUD_NAME_ENV_NAME)
 
 LOG_LEVELS = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+MCP_TRANSPORTS = ("stdio", "http", "docker")
 
 
 def init_logging(level_name: str) -> None:
@@ -63,19 +64,73 @@ def get_token() -> PerfectoToken:
     return token
 
 
-def run(log_level: str = "CRITICAL"):
+def resolve_mcp_transport(raw_cli_transport: str) -> str:
+    """
+    Resolve transport with precedence: CLI > PERFECTO_MCP_TRANSPORT > stdio.
+
+    `raw_cli_transport` comes from argparse `--mcp`:
+    - empty string means `--mcp` was provided without an explicit value
+    - non-empty string means an explicit CLI transport was provided
+    """
+    raw_cli_transport = raw_cli_transport.strip()
+
+    if raw_cli_transport:
+        candidate = raw_cli_transport
+        source = "CLI --mcp"
+    else:
+        candidate = os.getenv("PERFECTO_MCP_TRANSPORT", "").strip()
+        source = "PERFECTO_MCP_TRANSPORT"
+
+    if not candidate:
+        return "stdio"
+
+    normalized = candidate.lower()
+    if normalized not in MCP_TRANSPORTS:
+        allowed = ", ".join(MCP_TRANSPORTS)
+        raise ValueError(
+            f"Invalid MCP transport '{candidate}' from {source}. "
+            f"Valid values: {allowed}."
+        )
+    return normalized
+
+
+def build_runtime(
+        log_level: str = "CRITICAL",
+        transport: str = "stdio",
+) -> tuple[FastMCP, str]:
     init_telemetry("perfecto-mcp", __version__)
     token = get_token()
-
+    host = "127.0.0.1"
+    port = 8000
+    streamable_http_path = "/mcp"
+    if transport == "http":
+        host = os.getenv("FASTMCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+        port = int(os.getenv("FASTMCP_PORT", "8000").strip() or "8000")
+        streamable_http_path = os.getenv("FASTMCP_STREAMABLE_HTTP_PATH", "/mcp").strip() or "/mcp"
     instructions = """
 # Perfecto MCP Server
 
 """
-
-    mcp = FastMCP("perfecto-mcp", instructions=instructions,
-                  log_level=cast(LOG_LEVELS, log_level))
+    mcp = FastMCP(
+        "perfecto-mcp",
+        instructions=instructions,
+        log_level=cast(LOG_LEVELS, log_level),
+        host=host,
+        port=port,
+        streamable_http_path=streamable_http_path,
+        stateless_http=False,
+    )
     register_tools(mcp, token)
-    mcp.run(transport="stdio")
+    runtime_transport = "streamable-http" if transport == "http" else "stdio"
+    return mcp, runtime_transport
+
+
+def run(log_level: str = "CRITICAL", transport: str = "stdio"):
+    mcp, runtime_transport = build_runtime(
+        log_level=log_level,
+        transport=transport,
+    )
+    mcp.run(transport=runtime_transport)
 
 
 def main():
