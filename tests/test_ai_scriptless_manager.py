@@ -16,6 +16,7 @@ limitations under the License.
 
 import asyncio
 import copy
+import inspect
 import json
 
 import httpx
@@ -24,6 +25,7 @@ import pytest
 from config.perfecto import SUPPORT_MESSAGE
 from models.result import BaseResult
 from tools import ai_scriptless_manager
+from tools.ai_scriptless import definitions
 from tools.ai_scriptless.elements import (
     build_flow_element,
     build_if_statement,
@@ -89,7 +91,9 @@ def _mock_load_and_mutate(monkeypatch, initial_script: dict | None = None, captu
     async def fake_load_and_mutate(_token, test_id, mutator, snapshot_comment=None):
         script = copy.deepcopy(base_script)
         try:
-            mutator(script)
+            outcome = mutator(script)
+            if inspect.isawaitable(outcome):
+                await outcome
         except ValueError as exc:
             return BaseResult(error=str(exc))
         if captured is not None:
@@ -1139,7 +1143,9 @@ def _setup_dispatcher_mocks(monkeypatch, captured: dict | None = None, persisted
     async def fake_load_and_mutate(_token, test_id, mutator, snapshot_comment=None):
         payload = copy.deepcopy(script)
         try:
-            mutator(payload)
+            outcome = mutator(payload)
+            if inspect.isawaitable(outcome):
+                await outcome
         except ValueError as exc:
             return BaseResult(error=str(exc))
         if captured is not None:
@@ -1402,3 +1408,128 @@ def _register_tool(token):
     mcp = _McpStub()
     ai_scriptless_manager.register(mcp, token)
     return mcp.tools["perfecto_ai_scriptless"]
+
+
+class TestCmdArgumentsValidation:
+    def test_add_command_rejects_undeclared_argument_name(
+            self, perfecto_token, monkeypatch, declare_command_parameters):
+        declare_command_parameters({"ai_user-action": (["action"], ["handsetId"])})
+        _mock_load_and_mutate(monkeypatch)
+
+        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        result = asyncio.run(manager.add_command(
+            TEST_ID,
+            "ai_user-action",
+            cmd_arguments={"actions": "Tap on Login"},
+        ))
+
+        assert "Unknown cmd_arguments for command 'ai_user-action'" in result.error
+        assert "did you mean 'action'" in result.error
+        assert "get_command_definitions" in result.error
+
+    def test_add_command_accepts_declared_argument_name(
+            self, perfecto_token, monkeypatch, declare_command_parameters):
+        captured: dict = {}
+        declare_command_parameters({"ai_user-action": (["action"], ["handsetId"])})
+        _mock_load_and_mutate(monkeypatch, captured=captured)
+
+        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        result = asyncio.run(manager.add_command(
+            TEST_ID,
+            "ai_user-action",
+            cmd_arguments={"action": "Tap on Login"},
+        ))
+
+        assert result.error is None
+        arguments = captured["script"]["flowElements"][0]["arguments"]
+        assert {argument["name"] for argument in arguments} == {"action", "handsetId"}
+
+    def test_add_command_accepts_canonical_name_when_alias_is_declared(
+            self, perfecto_token, monkeypatch, declare_command_parameters):
+        # The repository declares waitDuration; the spec canonicalizes it to duration.
+        declare_command_parameters({"wait": (["waitDuration"], [])})
+        _mock_load_and_mutate(monkeypatch)
+
+        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        result = asyncio.run(manager.add_command(TEST_ID, "wait", cmd_arguments={"duration": "3"}))
+
+        assert result.error is None
+
+    def test_add_command_fails_open_without_definitions(self, perfecto_token, monkeypatch):
+        _mock_load_and_mutate(monkeypatch)
+
+        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        result = asyncio.run(manager.add_command(
+            TEST_ID,
+            "ai_user-action",
+            cmd_arguments={"whatever": "value"},
+        ))
+
+        assert result.error is None
+
+    def test_add_command_notes_empty_mandatory_parameter(
+            self, perfecto_token, monkeypatch, declare_command_parameters):
+        declare_command_parameters({"ai_user-action": (["action"], ["handsetId"])})
+        _mock_load_and_mutate(monkeypatch)
+
+        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        result = asyncio.run(manager.add_command(TEST_ID, "ai_user-action"))
+
+        assert result.error is None
+        assert any("Mandatory parameter(s) left empty" in note for note in result.result["notes"])
+
+    def test_modify_command_rejects_undeclared_argument_name(
+            self, perfecto_token, monkeypatch, declare_command_parameters):
+        declare_command_parameters({"wait": ([], ["duration"])})
+        _mock_load_and_mutate(monkeypatch, _script_with_steps("wait"))
+
+        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        result = asyncio.run(manager.modify_command(TEST_ID, "0", {"timeout": "5"}))
+
+        assert "Unknown cmd_arguments for command 'wait'" in result.error
+
+    def test_modify_command_accepts_declared_argument_name(
+            self, perfecto_token, monkeypatch, declare_command_parameters):
+        captured: dict = {}
+        declare_command_parameters({"wait": ([], ["duration"])})
+        _mock_load_and_mutate(monkeypatch, _script_with_steps("wait"), captured)
+
+        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        result = asyncio.run(manager.modify_command(TEST_ID, "0", {"duration": "5"}))
+
+        assert result.error is None
+        arguments = captured["script"]["flowElements"][0]["arguments"]
+        assert {"name": "duration", "value": "5"} in [
+            {"name": argument["name"], "value": argument["data"]["value"]} for argument in arguments
+        ]
+
+    def test_definitions_are_fetched_once_per_command(self, perfecto_token, monkeypatch):
+        calls: list[str] = []
+
+        async def counting_fetch(_token, command_id):
+            calls.append(command_id)
+            return frozenset({"action"}), frozenset({"handsetId"})
+
+        definitions.reset_declared_parameters_cache()
+        monkeypatch.setattr(definitions, "_fetch_declared_parameters", counting_fetch)
+        _mock_load_and_mutate(monkeypatch)
+
+        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        for _ in range(3):
+            asyncio.run(manager.add_command(
+                TEST_ID,
+                "ai_user-action",
+                cmd_arguments={"action": "Tap"},
+            ))
+
+        assert calls == ["ai_user-action"]
+
+    def test_unknown_action_hints_cmd_arguments_collision(self, perfecto_token):
+        tool = _register_tool(perfecto_token)
+        result = asyncio.run(_call_tool(tool, "Tap on the Login button", {
+            "test_id": TEST_ID,
+            "command_id": "ai_user-action",
+        }))
+
+        assert "not found in AI Scriptless manager tool" in result.error
+        assert "must stay nested inside 'cmd_arguments'" in result.error

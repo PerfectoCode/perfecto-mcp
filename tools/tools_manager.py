@@ -21,7 +21,7 @@ from config.version import __bundle__, __executable__, __uvx__, __version__
 from models.manager import Manager
 from models.result import BaseResult
 from telemetry import run_tool
-from tools.utils import timeout, user_agent
+from tools.utils import normalize_action_args, timeout, user_agent
 
 
 def _normalize_system(system: str) -> str:
@@ -335,10 +335,10 @@ Hints:
 """
     )
     async def tools(
-            action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
+            arguments: Dict[str, Any] = Field(description="Dictionary with arguments", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
+        action, args = normalize_action_args(arguments)
         if args is None:
             args = {}
         tools_manager = ToolsManager(token, ctx)

@@ -37,6 +37,13 @@ def command_selection_policy_info() -> List[str]:
         "Structural helpers (add_logical_step, add_loop, add_condition, comment, wait) are OK; "
         "keep observable steps AI-driven when possible.",
         "Call get_command_definitions only for the AI command_ids you will use.",
+        "cmd_arguments keys are the parameter names returned by get_command_definitions "
+        "(mandatory_parameters / optional_parameters); undeclared names are rejected.",
+        "Keep command arguments nested inside cmd_arguments: the 'action' parameter of ai_user-action "
+        "collides with the tool's own action key if flattened into args.",
+        "Values are constants by default; pass {\"data_source\": \"VARIABLE\", \"value\": \"<variable name>\"} "
+        "to bind an argument to a script variable.",
+        "modify_command merges: only the arguments sent are replaced, the others keep their current value.",
     ]
 
 def format_ai_scriptless_tests_filter_values(tests: dict[str, Any], params: Optional[dict] = None) -> dict[str, Any]:
