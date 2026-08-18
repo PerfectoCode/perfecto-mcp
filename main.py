@@ -7,8 +7,10 @@ from typing import Literal, cast
 
 from mcp.server.fastmcp import FastMCP, Icon
 
+from config.auth import run_streamable_http
 from config.perfecto import SECURITY_TOKEN_FILE_ENV_NAME, SECURITY_TOKEN_ENV_NAME, PERFECTO_CLOUD_NAME_ENV_NAME, \
     GITHUB
+from config.runtime import build_runtime
 from config.token import PerfectoToken, PerfectoTokenError
 from config.version import __version__, __executable__, __bundle__, __uvx__, get_version
 from server import register_tools
@@ -94,19 +96,42 @@ def resolve_mcp_transport(raw_cli_transport: str) -> str:
     return normalized
 
 
-def build_runtime(
+def to_wire_transport(logical_transport: str) -> Literal["stdio", "streamable-http"]:
+    """Map CLI/logical transport (stdio|http|docker) to FastMCP wire transport."""
+    return "streamable-http" if logical_transport == "http" else "stdio"
+
+
+def build_mcp_server(
         log_level: str = "CRITICAL",
         transport: str = "stdio",
 ) -> tuple[FastMCP, str]:
+    """
+    Build FastMCP + auth wiring for a logical CLI transport (stdio|http|docker).
+
+    Returns ``(mcp, wire_transport)`` where ``wire_transport`` is the FastMCP
+    transport name (``stdio`` or ``streamable-http``).
+    """
     init_telemetry("perfecto-mcp", __version__)
-    token = get_token()
     host = "127.0.0.1"
     port = 8000
     streamable_http_path = "/mcp"
     if transport == "http":
         host = os.getenv("FASTMCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
-        port = int(os.getenv("FASTMCP_PORT", "8000").strip() or "8000")
+        # Cloud Run injects PORT; prefer FASTMCP_PORT when set, else PORT, else 8000.
+        port_raw = (
+            os.getenv("FASTMCP_PORT")
+            or os.getenv("PORT")
+            or "8000"
+        ).strip() or "8000"
+        port = int(port_raw)
         streamable_http_path = os.getenv("FASTMCP_STREAMABLE_HTTP_PATH", "/mcp").strip() or "/mcp"
+
+    # docker and stdio share process-lifetime credentials; http uses Bearer per request.
+    wire_transport = to_wire_transport(transport)
+    app_runtime = build_runtime(
+        wire_transport,
+        startup_token=get_token() if wire_transport == "stdio" else None,
+    )
     instructions = """
 # Perfecto MCP Server
 
@@ -120,21 +145,27 @@ def build_runtime(
         streamable_http_path=streamable_http_path,
         stateless_http=False,
     )
-    register_tools(mcp, token)
-    runtime_transport = "streamable-http" if transport == "http" else "stdio"
-    return mcp, runtime_transport
+    register_tools(mcp, app_runtime)
+    return mcp, wire_transport
 
 
 def run(log_level: str = "CRITICAL", transport: str = "stdio"):
-    mcp, runtime_transport = build_runtime(
+    mcp, runtime_transport = build_mcp_server(
         log_level=log_level,
         transport=transport,
     )
-    mcp.run(transport=runtime_transport)
+    if runtime_transport == "stdio":
+        mcp.run(transport=runtime_transport)
+    else:
+        # Hosted HTTP requires Bearer auth middleware around the ASGI app.
+        run_streamable_http(mcp)
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="perfecto-mcp")
+    parser = argparse.ArgumentParser(
+        prog="perfecto-mcp",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
 
     parser.add_argument(
         "--version",
@@ -144,8 +175,13 @@ def main():
 
     parser.add_argument(
         "--mcp",
-        action="store_true",
-        help="Execute MCP Server"
+        nargs="?",
+        const="",
+        metavar="TRANSPORT",
+        help=(
+            "Execute MCP Server. Optional TRANSPORT values: stdio, http, docker.\n"
+            "Resolution precedence: CLI > PERFECTO_MCP_TRANSPORT > stdio."
+        ),
     )
 
     parser.add_argument(
@@ -157,9 +193,17 @@ def main():
 
     args = parser.parse_args()
     
-    if args.mcp:
-        init_logging(args.log_level)
-        run(log_level=args.log_level.upper())
+    if args.mcp is not None:
+        try:
+            transport = resolve_mcp_transport(args.mcp)
+            if transport == "docker":
+                os.environ["MCP_DOCKER"] = "true"
+            elif transport == "http":
+                os.environ["MCP_DOCKER"] = "false"
+            init_logging(args.log_level)
+            run(log_level=args.log_level.upper(), transport=transport)
+        except ValueError as e:
+            parser.error(str(e))
     else:
 
         logo_ascii = (

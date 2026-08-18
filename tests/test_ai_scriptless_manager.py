@@ -30,6 +30,8 @@ from tools.ai_scriptless.elements import (
     build_logical_step,
     new_empty_script,
 )
+from config.runtime import build_runtime
+from tests.conftest import make_ctx
 from tools.ai_scriptless_manager import AiScriptlessManager, STEP_PATH_REFRESH_NOTES
 
 TEST_ID = "PRIVATE:Folder/Test.xml"
@@ -117,7 +119,7 @@ class TestExecuteTestDeviceMapping:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
             "real",
@@ -137,7 +139,7 @@ class TestExecuteTestDeviceMapping:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
             "real",
@@ -148,7 +150,7 @@ class TestExecuteTestDeviceMapping:
         assert captured["json"]["params"]["DUT"] == "DEVICE-456"
 
     def test_real_device_requires_device_id(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
             "real",
@@ -165,7 +167,7 @@ class TestExecuteTestDeviceMapping:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
             "virtual",
@@ -191,7 +193,7 @@ class TestExecuteTestDeviceMapping:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
             "virtual",
@@ -205,7 +207,7 @@ class TestExecuteTestDeviceMapping:
         assert dut["model"] is None
 
     def test_invalid_device_type_returns_error(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
             "unknown",
@@ -222,7 +224,7 @@ class TestExecuteTestDeviceMapping:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             TEST_ID,
             "desktop",
@@ -251,7 +253,7 @@ class TestExecuteTestDeviceMapping:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             TEST_ID,
             "desktop",
@@ -292,7 +294,7 @@ class TestListAndReadOperations:
             lambda _cloud: "https://demo.app.perfectomobile.com/perfectomobile/ai-scriptless/api",
         )
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.list_tests({"page_index": 1, "visibility": "PRIVATE"}))
 
         assert result.error is None
@@ -307,7 +309,7 @@ class TestListAndReadOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.list_tests({}))
         assert result.error == "tree unavailable"
 
@@ -326,7 +328,7 @@ class TestListAndReadOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.list_filter_values(["test_name", "owner_list"]))
 
         assert result.error is None
@@ -340,7 +342,7 @@ class TestListAndReadOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.list_filter_values(["bad_filter"]))
 
         assert "invalid filter_names" in result.error
@@ -371,7 +373,7 @@ class TestListAndReadOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.list_commands())
 
         assert result.error is None
@@ -387,7 +389,7 @@ class TestListAndReadOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.list_commands(checkpoint=True))
 
         assert result.error is None
@@ -410,7 +412,7 @@ class TestListAndReadOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.view_test_structure(TEST_ID))
 
         assert result.error is None
@@ -419,7 +421,7 @@ class TestListAndReadOperations:
         assert result.info is not None
 
     def test_view_test_structure_requires_test_id(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.view_test_structure(""))
         assert result.error == "test_id is required (itemKey from list_tests)"
 
@@ -438,7 +440,7 @@ class TestListAndReadOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.get_command_definitions(["wait"]))
 
         assert result.error is None
@@ -465,7 +467,7 @@ class TestListAndReadOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.view_snapshot("PRIVATE:Folder/Test.xml@uuid-1"))
 
         assert result.error is None
@@ -475,37 +477,37 @@ class TestListAndReadOperations:
 
 class TestManagerValidation:
     def test_add_command_requires_test_id(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_command("", "ai_user-action"))
         assert result.error == "test_id is required"
 
     def test_add_command_requires_command_id(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_command("PRIVATE:Folder/Test.xml", ""))
         assert "command_id is required" in result.error
 
     def test_view_snapshot_rejects_current_marker(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.view_snapshot("<current>"))
         assert "not a historical snapshot" in result.error
 
     def test_modify_command_requires_arguments(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.modify_command(TEST_ID, "0", {}))
         assert result.error == "arguments is required"
 
     def test_save_test_requires_test_id(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.save_test(""))
         assert result.error == "test_id is required"
 
     def test_create_test_requires_name(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.create_test(""))
         assert result.error == "name is required"
 
     def test_save_test_as_requires_name(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.save_test_as(TEST_ID, ""))
         assert result.error == "name is required"
 
@@ -515,7 +517,7 @@ class TestCommandMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, captured=captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_command(
             TEST_ID,
             "wait",
@@ -532,7 +534,7 @@ class TestCommandMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, _script_with_steps("wait"), captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.modify_command(
             TEST_ID,
             "0",
@@ -549,7 +551,7 @@ class TestCommandMutations:
     def test_modify_command_returns_error_for_missing_step_path(self, perfecto_token, monkeypatch):
         _mock_load_and_mutate(monkeypatch, _script_with_steps("wait"))
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.modify_command(TEST_ID, "9", {"duration": "1"}))
 
         assert result.error == "step_path not found: 9"
@@ -558,7 +560,7 @@ class TestCommandMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, _script_with_steps("wait", "comment"), captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.delete_command(TEST_ID, "0"))
 
         _assert_step_path_notes(result)
@@ -569,7 +571,7 @@ class TestCommandMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, _script_with_steps("wait"), captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.set_command_enabled(TEST_ID, "0", False))
 
         _assert_step_path_notes(result)
@@ -577,7 +579,7 @@ class TestCommandMutations:
         assert captured["script"]["flowElements"][0]["active"] is False
 
     def test_move_command_requires_target_path(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.move_command(TEST_ID, "0"))
         assert result.error == "after_path or parent_path is required"
 
@@ -585,7 +587,7 @@ class TestCommandMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, _script_with_steps("wait", "comment"), captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.move_command(TEST_ID, "0", after_path="0"))
 
         _assert_step_path_notes(result)
@@ -596,7 +598,7 @@ class TestCommandMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, _script_with_steps("wait", "comment"), captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_command(
             TEST_ID,
             "ai_user-action",
@@ -614,7 +616,7 @@ class TestCommandMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, _script_with_logical_group(), captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_command(
             TEST_ID,
             "comment",
@@ -634,7 +636,7 @@ class TestCommandMutations:
 
         monkeypatch.setattr(ai_scriptless_manager, "load_and_mutate", fake_load_and_mutate)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_command(TEST_ID, "wait"))
         assert result.error == "persist failed"
 
@@ -646,7 +648,7 @@ class TestCommandMutations:
         script["numOfFlowElements"] = 2
         _mock_load_and_mutate(monkeypatch, script, captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.move_command(TEST_ID, "1", parent_path="0"))
 
         _assert_step_path_notes(result)
@@ -659,7 +661,7 @@ class TestStructureMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, captured=captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_logical_step(TEST_ID, label="Setup"))
 
         _assert_step_path_notes(result)
@@ -670,7 +672,7 @@ class TestStructureMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, _script_with_logical_group(), captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_logical_step(TEST_ID, label="Nested", parent_path="0"))
 
         _assert_step_path_notes(result)
@@ -680,7 +682,7 @@ class TestStructureMutations:
         assert result.result["step_path"] == "0.0"
 
     def test_add_loop_rejects_invalid_count(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_loop(TEST_ID, count=0))
         assert result.error == "count must be at least 1"
 
@@ -688,7 +690,7 @@ class TestStructureMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, captured=captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_loop(TEST_ID, count=3))
 
         _assert_step_path_notes(result)
@@ -699,7 +701,7 @@ class TestStructureMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, _script_with_logical_group(), captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_loop(TEST_ID, count=2, parent_path="0"))
 
         _assert_step_path_notes(result)
@@ -713,7 +715,7 @@ class TestStructureMutations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, captured=captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_condition(TEST_ID, expression="x == 1", label="Check"))
 
         _assert_step_path_notes(result)
@@ -726,7 +728,7 @@ class TestStructureMutations:
         script["flowElements"] = [build_if_statement("x == 1", "Check")]
         _mock_load_and_mutate(monkeypatch, script, captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_condition(
             TEST_ID,
             expression="y == 2",
@@ -745,7 +747,7 @@ class TestStructureMutations:
         script["flowElements"] = [build_if_statement("old", "If")]
         _mock_load_and_mutate(monkeypatch, script, captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.set_condition_expression(TEST_ID, "0", "new == true"))
 
         _assert_step_path_notes(result)
@@ -753,7 +755,7 @@ class TestStructureMutations:
         assert captured["script"]["flowElements"][0]["expression"] == "new == true"
 
     def test_set_condition_expression_requires_expression(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.set_condition_expression(TEST_ID, "0", ""))
         assert result.error == "expression is required"
 
@@ -778,7 +780,7 @@ class TestVariableOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.list_test_variables(TEST_ID))
 
         assert result.error is None
@@ -791,7 +793,7 @@ class TestVariableOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.list_test_variables(TEST_ID))
         assert result.error == "script missing"
 
@@ -799,7 +801,7 @@ class TestVariableOperations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, captured=captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.add_test_variable(
             TEST_ID, "count", "number", 42, set_at_runtime=True,
         ))
@@ -811,7 +813,7 @@ class TestVariableOperations:
         assert captured["script"]["variables"][0]["@type"] == "Parameter"
 
     def test_modify_test_variable_requires_change(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.modify_test_variable(TEST_ID, "token"))
         assert "At least one of value, variable_type, or set_at_runtime is required" in result.error
 
@@ -831,7 +833,7 @@ class TestVariableOperations:
         }]
         _mock_load_and_mutate(monkeypatch, script, captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.modify_test_variable(TEST_ID, "token", value="new"))
 
         assert result.error is None
@@ -853,7 +855,7 @@ class TestVariableOperations:
         }]
         _mock_load_and_mutate(monkeypatch, script, captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.delete_test_variable(TEST_ID, "token"))
 
         assert result.error is None
@@ -871,7 +873,7 @@ class TestRepositoryOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "persist_script", fake_persist)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.create_test("Login", folder="My Folder"))
 
         assert result.error is None
@@ -883,7 +885,7 @@ class TestRepositoryOperations:
         captured: dict = {}
         _mock_load_and_mutate(monkeypatch, captured=captured)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.save_test(TEST_ID, comment="checkpoint"))
 
         assert result.error is None
@@ -905,7 +907,7 @@ class TestRepositoryOperations:
         monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch)
         monkeypatch.setattr(ai_scriptless_manager, "persist_script", fake_persist)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.save_test_as(
             TEST_ID,
             "Copy",
@@ -925,7 +927,7 @@ class TestRepositoryOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.save_test_as(TEST_ID, "Copy"))
         assert result.error == "source missing"
 
@@ -935,12 +937,12 @@ class TestRepositoryOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.move_test(TEST_ID, "Archive"))
         assert result.error == "move denied"
 
     def test_list_snapshots_rejects_invalid_item_key(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.list_snapshots("invalid"))
         assert "Invalid itemKey format" in result.error
 
@@ -954,7 +956,7 @@ class TestRepositoryOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.move_test(TEST_ID, "Archive", visibility="PUBLIC"))
 
         assert result.error is None
@@ -965,7 +967,7 @@ class TestRepositoryOperations:
         assert result.result["source_item_key"] == TEST_ID
 
     def test_move_test_rejects_invalid_item_key(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.move_test("not-an-item-key", "Archive"))
         assert "Invalid itemKey format" in result.error
 
@@ -979,7 +981,7 @@ class TestRepositoryOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.delete_test(TEST_ID))
 
         assert result.error is None
@@ -992,7 +994,7 @@ class TestRepositoryOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.delete_test(TEST_ID))
         assert result.error == "delete denied"
 
@@ -1006,7 +1008,7 @@ class TestRepositoryOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.list_snapshots(TEST_ID))
 
         assert result.error is None
@@ -1020,12 +1022,12 @@ class TestRepositoryOperations:
 
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.list_snapshots(TEST_ID))
         assert result.error == "snapshots unavailable"
 
     def test_get_command_definitions_requires_ids(self, perfecto_token):
-        manager = AiScriptlessManager(perfecto_token, ctx=None)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.get_command_definitions([]))
         assert result.error == "command_ids is required and must not be empty"
 
@@ -1156,7 +1158,7 @@ def _setup_dispatcher_mocks(monkeypatch, captured: dict | None = None, persisted
 class TestAiScriptlessDispatcher:
     def test_unknown_action_returns_error(self, perfecto_token):
         tool = _register_tool(perfecto_token)
-        result = asyncio.run(tool(action="not_a_real_action", args={}, ctx=None))
+        result = asyncio.run(tool(action="not_a_real_action", args={}, ctx=make_ctx()))
         assert "not found in AI Scriptless manager tool" in result.error
 
     def test_routes_add_command(self, perfecto_token, monkeypatch):
@@ -1171,7 +1173,7 @@ class TestAiScriptlessDispatcher:
                 "command_id": "wait",
                 "arguments": {"duration": "1"},
             },
-            ctx=None,
+            ctx=make_ctx(),
         ))
 
         assert result.error is None
@@ -1201,7 +1203,7 @@ class TestAiScriptlessDispatcher:
         result = asyncio.run(tool(
             action="list_test_variables",
             args={"test_id": TEST_ID},
-            ctx=None,
+            ctx=make_ctx(),
         ))
 
         assert result.error is None
@@ -1214,7 +1216,7 @@ class TestAiScriptlessDispatcher:
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
 
         tool = _register_tool(perfecto_token)
-        result = asyncio.run(tool(action="list_tests", args=None, ctx=None))
+        result = asyncio.run(tool(action="list_tests", args=None, ctx=make_ctx()))
         assert result.error == "tree unavailable"
 
     def test_routes_move_command(self, perfecto_token, monkeypatch):
@@ -1225,7 +1227,7 @@ class TestAiScriptlessDispatcher:
         result = asyncio.run(tool(
             action="move_command",
             args={"test_id": TEST_ID, "step_path": "0", "after_path": "0"},
-            ctx=None,
+            ctx=make_ctx(),
         ))
 
         assert result.error is None
@@ -1240,7 +1242,7 @@ class TestAiScriptlessDispatcher:
         result = asyncio.run(tool(
             action="delete_command",
             args={"test_id": TEST_ID, "step_path": "0"},
-            ctx=None,
+            ctx=make_ctx(),
         ))
 
         assert result.error is None
@@ -1263,7 +1265,7 @@ class TestAiScriptlessDispatcher:
                 "device_type": "real",
                 "device_under_test": {"device_id": "DEV-1"},
             },
-            ctx=None,
+            ctx=make_ctx(),
         ))
 
         assert result.error is None
@@ -1282,7 +1284,7 @@ class TestAiScriptlessDispatcher:
         result = asyncio.run(tool(
             action="create_test",
             args={"name": "Smoke", "folder": "QA"},
-            ctx=None,
+            ctx=make_ctx(),
         ))
 
         assert result.error is None
@@ -1295,7 +1297,7 @@ class TestAiScriptlessDispatcher:
     ])
     def test_dispatcher_validation_errors(self, perfecto_token, action, args, expected_error):
         tool = _register_tool(perfecto_token)
-        result = asyncio.run(tool(action=action, args=args, ctx=None))
+        result = asyncio.run(tool(action=action, args=args, ctx=make_ctx()))
         if expected_error:
             assert expected_error in result.error
 
@@ -1308,7 +1310,7 @@ class TestAiScriptlessDispatcher:
         monkeypatch.setattr(ai_scriptless_manager, "api_request", raise_http_error)
 
         tool = _register_tool(perfecto_token)
-        result = asyncio.run(tool(action="list_tests", args={}, ctx=None))
+        result = asyncio.run(tool(action="list_tests", args={}, ctx=make_ctx()))
 
         assert result.error is not None
         assert result.error.startswith("Error:")
@@ -1321,7 +1323,7 @@ class TestAiScriptlessDispatcher:
         monkeypatch.setattr(ai_scriptless_manager, "api_request", raise_runtime_error)
 
         tool = _register_tool(perfecto_token)
-        result = asyncio.run(tool(action="list_tests", args={}, ctx=None))
+        result = asyncio.run(tool(action="list_tests", args={}, ctx=make_ctx()))
 
         assert "boom" in result.error
         assert SUPPORT_MESSAGE in result.error
@@ -1348,7 +1350,7 @@ class TestAiScriptlessDispatcher:
         result = asyncio.run(tool(
             action="view_test_structure",
             args={"test_id": TEST_ID},
-            ctx=None,
+            ctx=make_ctx(),
         ))
 
         assert result.error is None
@@ -1363,7 +1365,7 @@ class TestAiScriptlessDispatcher:
         result = asyncio.run(tool(
             action="list_filter_values",
             args={"filter_names": ["test_name", "owner_list"]},
-            ctx=None,
+            ctx=make_ctx(),
         ))
 
         assert result.error is None
@@ -1383,7 +1385,7 @@ class TestAiScriptlessDispatcher:
                 "visibility": "PUBLIC",
                 "comment": "v2",
             },
-            ctx=None,
+            ctx=make_ctx(),
         ))
 
         assert result.error is None
@@ -1404,7 +1406,7 @@ class TestAiScriptlessDispatcher:
                 "value": 3,
                 "set_at_runtime": True,
             },
-            ctx=None,
+            ctx=make_ctx(),
         ))
 
         assert result.error is None
@@ -1417,7 +1419,7 @@ class TestAiScriptlessDispatcher:
         _setup_dispatcher_mocks(monkeypatch)
 
         tool = _register_tool(perfecto_token)
-        result = asyncio.run(tool(action=action, args=args, ctx=None))
+        result = asyncio.run(tool(action=action, args=args, ctx=make_ctx()))
 
         assert "not found in AI Scriptless manager tool" not in (result.error or "")
 
@@ -1434,5 +1436,5 @@ def _register_tool(token):
             return decorator
 
     mcp = _McpStub()
-    ai_scriptless_manager.register(mcp, token)
+    ai_scriptless_manager.register(mcp, build_runtime("stdio", startup_token=token))
     return mcp.tools["perfecto_ai_scriptless"]
