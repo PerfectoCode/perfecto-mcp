@@ -5,6 +5,12 @@ from tools.ai_scriptless.commands import (
     get_command_spec,
     parse_command_id,
 )
+from tools.ai_scriptless.definitions import (
+    declared_parameters,
+    empty_mandatory_note,
+    reset_declared_parameters_cache,
+    validate_argument_names,
+)
 from tools.ai_scriptless.elements import (
     build_arguments,
     build_branch,
@@ -94,8 +100,10 @@ __all__ = [
     "coerce_script_dict",
     "coerce_step_path",
     "command_id_from_element",
+    "declared_parameters",
     "delete_element_by_path",
     "delete_script_variable",
+    "empty_mandatory_note",
     "fetch_script_payload",
     "find_container_by_path",
     "find_element_by_path",
@@ -113,6 +121,7 @@ __all__ = [
     "new_empty_script",
     "persist_script",
     "parse_command_id",
+    "reset_declared_parameters_cache",
     "script_write_lock",
     "set_condition_expression",
     "set_element_enabled",
@@ -120,6 +129,7 @@ __all__ = [
     "strip_non_api_script_fields",
     "update_element_arguments",
     "update_flow_element_counts",
+    "validate_argument_names",
     "validate_step_path",
     "validate_variable_name",
 ]

@@ -17,8 +17,46 @@ limitations under the License.
 import pytest
 
 from config.token import PerfectoToken
+from models.result import BaseResult
+from tools.ai_scriptless import definitions
 
 
 @pytest.fixture
 def perfecto_token() -> PerfectoToken:
     return PerfectoToken("test-token", "demo")
+
+
+@pytest.fixture(autouse=True)
+def offline_command_definitions(monkeypatch):
+    """Keep cmd_arguments validation offline.
+
+    Validation resolves declared parameters over HTTP and memoizes them, so the
+    request is stubbed out (no declared parameters = validation fails open) and the
+    cache is reset on both ends. Use declare_command_parameters to opt into validation.
+    """
+    definitions.reset_declared_parameters_cache()
+
+    async def offline_api_request(*_args, **_kwargs):
+        return BaseResult(error="command definitions are not fetched in tests")
+
+    monkeypatch.setattr(definitions, "api_request", offline_api_request)
+    yield
+    definitions.reset_declared_parameters_cache()
+
+
+@pytest.fixture
+def declare_command_parameters(monkeypatch, offline_command_definitions):
+    """Declare parameters per command_id: {command_id: (mandatory, optional)}."""
+
+    def declare(declarations: dict[str, tuple[list[str], list[str]]]) -> None:
+        async def fake_fetch(_token, command_id):
+            declaration = declarations.get(command_id)
+            if declaration is None:
+                return None
+            mandatory, optional = declaration
+            return frozenset(mandatory), frozenset(optional)
+
+        definitions.reset_declared_parameters_cache()
+        monkeypatch.setattr(definitions, "_fetch_declared_parameters", fake_fetch)
+
+    return declare

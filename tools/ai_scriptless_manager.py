@@ -25,8 +25,11 @@ from tools.ai_scriptless_script import (
     build_loop,
     build_move_test_body,
     build_snapshot_search_body,
+    command_id_from_element,
+    declared_parameters,
     delete_script_variable,
     delete_element_by_path,
+    empty_mandatory_note,
     fetch_script_payload,
     find_element_by_path,
     find_step_path_for_element,
@@ -43,6 +46,7 @@ from tools.ai_scriptless_script import (
     item_key_file_name,
     format_test_ui_location,
     update_element_arguments,
+    validate_argument_names,
 )
 from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
 
@@ -51,6 +55,22 @@ STEP_PATH_REFRESH_NOTES = [
     "After this operation, step paths may have changed. Call view_test_structure before the next edit; "
     "do not reuse step_path values from this response.",
 ]
+
+CMD_ARGUMENTS_COLLISION_HINT = (
+    "The ai_user-action command declares a parameter named 'action', which collides with the action key "
+    "of this tool: command arguments must stay nested inside 'cmd_arguments', never flattened into args. "
+    "Example: {\"action\": \"add_command\", \"args\": {\"test_id\": \"...\", "
+    "\"command_id\": \"ai_user-action\", \"cmd_arguments\": {\"action\": \"Tap on the Login button\"}}}."
+)
+
+
+def _unknown_action_error(action: str, args: Dict[str, Any]) -> str:
+    error = f"Action {action} not found in AI Scriptless manager tool"
+    # A command argument flattened to the top level overwrites the dispatcher action with free text.
+    if args.get("command_id") or " " in action:
+        error = f"{error}. {CMD_ARGUMENTS_COLLISION_HINT}"
+    return error
+
 
 def _append_step_path_refresh_notes(result: BaseResult) -> BaseResult:
     if result.error or not isinstance(result.result, dict):
@@ -256,6 +276,11 @@ class AiScriptlessManager(Manager):
         if not command_id:
             return BaseResult(error="command_id is required (from list_commands)")
 
+        declared = await declared_parameters(self.token, command_id)
+        names_error = validate_argument_names(command_id, cmd_arguments, declared)
+        if names_error:
+            return BaseResult(error=names_error)
+
         element = build_flow_element(command_id, cmd_arguments)
         inserted_path: dict[str, Optional[str]] = {"step_path": None}
 
@@ -268,6 +293,9 @@ class AiScriptlessManager(Manager):
             return result
         result.result["step_path"] = inserted_path["step_path"]
         result.result["command_id"] = command_id
+        empty_note = empty_mandatory_note(command_id, cmd_arguments, declared)
+        if empty_note:
+            result.result.setdefault("notes", []).append(empty_note)
         return _append_step_path_refresh_notes(result)
 
     @token_verify
@@ -279,11 +307,17 @@ class AiScriptlessManager(Manager):
         if not cmd_arguments:
             return BaseResult(error="cmd_arguments is required")
 
-        def mutator(script: dict[str, Any]) -> None:
+        async def mutator(script: dict[str, Any]) -> None:
             located = find_element_by_path(script, step_path)
             if located is None:
                 raise ValueError(f"step_path not found: {step_path}")
             _, _, element = located
+            # command_id is only known after locating the step, so validation happens here.
+            command_id = command_id_from_element(element)
+            declared = await declared_parameters(self.token, command_id)
+            names_error = validate_argument_names(command_id, cmd_arguments, declared)
+            if names_error:
+                raise ValueError(names_error)
             update_element_arguments(element, cmd_arguments)
 
         return _append_step_path_refresh_notes(
@@ -675,20 +709,31 @@ Actions:
     args(dict): Dictionary with the following optional parameters:
         checkpoint (bool, default=false): If true, list checkpoint commands only.
 - get_command_definitions: Get parameter definitions for one or more commands.
+    Returns mandatory_parameters and optional_parameters: these names are exactly the keys to use
+    in cmd_arguments on add_command and modify_command (parameter = the declaration, argument = the value you set).
     args(dict): Dictionary with the following required parameters:
         command_ids (list[str]): Command IDs from list_commands (typically ai_user-action, ai_validation, ai_visual-comparison).
 - add_command: Add a command to a test and persist it.
     args(dict): Dictionary with the following parameters:
         test_id (str, required): Test itemKey from list_tests.
         command_id (str, required): Command ID from list_commands.
-        cmd_arguments (dict, optional): Command argument names to values.
+        cmd_arguments (dict, optional): Command argument names to values. Keys must be parameter names from
+            get_command_definitions (mandatory_parameters / optional_parameters); undeclared keys are rejected.
+            Values are constants by default. To point an argument at a script variable instead of a constant,
+            pass {"data_source": "VARIABLE", "value": "<variable name>"} (see list_test_variables).
+            Never flatten these keys to the top level of args: ai_user-action declares a parameter named
+            'action', which would collide with the action key of this tool. Always nest them in cmd_arguments,
+            e.g. {"action": "add_command", "args": {"test_id": "...", "command_id": "ai_user-action",
+            "cmd_arguments": {"action": "Tap on the Login button"}}}.
         after_path (str, optional): Insert after this step (step_path from view_test_structure).
         parent_path (str, optional): Insert inside a container (step_path of LogicalStep, Loop, or Branch).
 - modify_command: Update command arguments and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
         step_path (str): Step path from view_test_structure (e.g. 0, 2.0, 5.b0.1).
-        cmd_arguments (dict): Argument names to new values.
+        cmd_arguments (dict): Argument names to new values. Merge semantics: only the arguments you send are
+            replaced, the rest keep their current value, and arguments cannot be removed (delete_command removes
+            the whole step). Same key rules as add_command (declared parameter names, optional data_source form).
 - delete_command: Remove a command from a test and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
@@ -787,6 +832,8 @@ Hints:
 - HELP: For product behavior and workarounds, use the perfecto_help tool: Filter by category_id='perfecto', subcategory_id_list=['ide'].
 - UI_ACCESS: No per-test URL exists. Only UI entry: cloud_url/lab/scriptless-mobile/ (cloud_url from perfecto_user read_user). For debugging or unsupported MCP tasks, link the lab URL and tell the user to open the test via Tests → Open or Manage tests using the folder tree and test name from list_tests (itemKey is MCP-only; the UI shows folders and names, not itemKey). Never invent other scriptless URLs.
 - When authoring or editing test steps, call list_commands first and follow the command selection policy in the info field.
+- cmd_arguments keys are validated against the command definitions before saving: an undeclared name is rejected with
+  the list of valid parameter names instead of being persisted as a step argument that Perfecto ignores at runtime.
 - step_path is a dot-separated positional path without spaces (0-based indices; b0=Then branch, b1=Else). Example: root step 3 is "3"; first step inside Then of condition at 5 is "5.b0.0". Perfecto does not persist paths; they change when steps are inserted, moved, or deleted. Always call view_test_structure before the next structure edit; do not reuse step_path from a previous mutation response.
 - Use parent_path on add_command with the step_path of a LogicalStep, Loop, or Branch from view_test_structure.
 - Use add_logical_step, add_loop, and add_condition to build control-flow structures matching the UI toolbar Group, Loop, and Condition actions.
@@ -950,9 +997,7 @@ Hints:
                         args.get("name", ""),
                     )
                 case _:
-                    return BaseResult(
-                        error=f"Action {action} not found in AI Scriptless manager tool"
-                    )
+                    return BaseResult(error=_unknown_action_error(action, args))
 
         try:
             return await run_tool(f"{TOOLS_PREFIX}_ai_scriptless", action, ctx, _dispatch)

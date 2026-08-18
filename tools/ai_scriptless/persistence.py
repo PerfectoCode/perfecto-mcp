@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import inspect
 import json
 from contextlib import asynccontextmanager
 from typing import Any, Optional
@@ -147,7 +148,10 @@ async def load_and_mutate(
         saved_script = copy.deepcopy(payload.get("script", {}))
         normalize_if_statement_aliases(script)
         try:
-            mutator(script)
+            outcome = mutator(script)
+            # Mutators may be async when they need the API (e.g. command definitions).
+            if inspect.isawaitable(outcome):
+                await outcome
         except ValueError as exc:
             return BaseResult(error=str(exc))
         return await _persist_script(
