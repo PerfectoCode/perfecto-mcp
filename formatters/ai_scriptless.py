@@ -7,10 +7,18 @@ from models.ai_scriptless import (
     CommandDefinitionSummary,
     ScriptFlowElement,
     ScriptParameter,
+    ScriptStepArgument,
+    ScriptStepDetail,
+    ScriptStepParameter,
     ScriptVariableSummary,
     SnapshotListResult,
     SnapshotSummary,
     TestStructure,
+)
+from tools.ai_scriptless.definitions import (
+    parameter_label,
+    restriction_allowed_values,
+    restriction_range,
 )
 from tools.ai_scriptless.elements import normalize_if_statement_aliases
 
@@ -30,7 +38,7 @@ def command_selection_policy_info() -> List[str]:
         "  • ai_user-action — user interactions (open browser/app, navigate to URL, tap, type, dismiss overlays); "
         "argument: action (natural language).",
         "  • ai_validation — checkpoints and assertions; argument: validation (natural language).",
-        "  • ai_visual-comparison — visual/baseline comparison; argument: name.",
+        "  • ai_visual-comparison — visual/baseline comparison; argument: baselineId.",
         "Prefer ai_user-action for navigation (e.g. open browser and go to URL), not browser_goto / browser_open.",
         "Do not use browser_*, touch_tap, webpage.element_*, checkpoint_text, etc. unless the user explicitly "
         "requests a non-AI command or agreed that AI commands cannot meet a documented requirement.",
@@ -42,8 +50,11 @@ def command_selection_policy_info() -> List[str]:
         "Keep command arguments nested inside cmd_arguments: the 'action' parameter of ai_user-action "
         "collides with the tool's own action key if flattened into args.",
         "Values are constants by default; pass {\"data_source\": \"VARIABLE\", \"value\": \"<variable name>\"} "
-        "to bind an argument to a script variable.",
+        "to bind an argument to a script variable, or {\"data_source\": \"DATATABLE\", \"table_name\": \"<table>\", "
+        "\"column\": \"<column>\"} to bind it to a DataTable column.",
         "modify_command merges: only the arguments sent are replaced, the others keep their current value.",
+        "Values are validated against the declared type, range, allowed values and data sources; "
+        "view_test_step reports all four for every argument of an existing step.",
     ]
 
 def format_ai_scriptless_tests_filter_values(tests: dict[str, Any], params: Optional[dict] = None) -> dict[str, Any]:
@@ -168,17 +179,17 @@ def _parameter_display_label(param: dict[str, Any]) -> str:
 
 
 def _format_argument_display_value(element: dict[str, Any], argument_name: str) -> Optional[str]:
-    for argument in element.get("arguments", []):
-        if argument.get("name") != argument_name:
-            continue
-        data = argument.get("data", {})
-        value = data.get("value")
-        if value is None:
-            return None
-        if data.get("secured"):
-            return "<secured>"
-        return str(value)
-    return None
+    # A multivalued parameter has several arguments under one name; the UI shows the last.
+    matches = [a for a in element.get("arguments", []) if a.get("name") == argument_name]
+    if not matches:
+        return None
+    data = matches[-1].get("data", {})
+    value = data.get("value")
+    if value is None:
+        return None
+    if data.get("secured"):
+        return "<secured>"
+    return str(value)
 
 
 def _command_step_display_name(
@@ -245,19 +256,24 @@ def _step_display_name(element: dict[str, Any], definitions_map: dict[str, dict[
 
     if element_type == "Loop":
         iterator = element.get("iterator", {})
+        variable = iterator.get("variable")
+        if variable:
+            return f"Loop ({variable})"
         count = iterator.get("count")
         if count is not None:
-            return f"Loop ({count})"
+            # The API serializes the count as a float; 2.0 reads as a broken count.
+            return f"Loop ({_range_bound(count)})"
         return "Loop"
 
     if element_type == "IfStatement":
-        expression = element.get("expression") or element.get("label")
-        if expression:
-            return f"Condition ({expression})"
+        label = element.get("label")
+        if label:
+            return f"Condition ({label})"
         return "Condition"
 
     if element_type == "LogicalStep":
-        label = element.get("label")
+        # The UI stores the group title in `name`; `label` is only what older MCP writes used.
+        label = element.get("name") or element.get("label")
         if label:
             return label
         return "Step"
@@ -354,6 +370,196 @@ def format_test_structure(payload: dict[str, Any], params: Optional[dict] = None
         parameters=parameters,
         model_version=info.get("modelVersion"),
         flow_elements=flow_elements,
+    )
+
+
+def _restriction_allowed_values(
+        param: dict[str, Any],
+        command_id: Optional[str] = None,
+) -> List[str]:
+    return list(restriction_allowed_values(param, command_id))
+
+
+def _renamed_declared_label(
+        command_id: Optional[str],
+        name: Optional[str],
+        declared: Optional[str],
+) -> Optional[str]:
+    """The declared label, reported only where the editor shows a different one."""
+    shown = parameter_label(command_id, name, declared)
+    return declared if shown != declared else None
+
+
+def _range_bound(value: Any) -> str:
+    # The API serializes bounds as floats (0.0, 3600.0); render integral ones as integers.
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _restriction_range(param: dict[str, Any]) -> Optional[str]:
+    minimum, maximum = restriction_range(param)
+    if minimum is None and maximum is None:
+        return None
+    return f"{_range_bound(minimum)}..{_range_bound(maximum)}"
+
+
+def _step_parameters_map(definition: Optional[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    if not definition:
+        return {}
+    mandatory_names = {
+        param.get("name") or param.get("parameterName")
+        for param in _definition_data(definition).get("mandatoryParameters") or []
+        if isinstance(param, dict)
+    }
+    parameters: dict[str, dict[str, Any]] = {}
+    for param in _iter_definition_parameters(definition):
+        name = param.get("name") or param.get("parameterName")
+        parameters[name] = {**param, "_mandatory": name in mandatory_names}
+    return parameters
+
+
+def _step_argument(
+        argument: dict[str, Any],
+        parameters: dict[str, dict[str, Any]],
+        command_id: Optional[str] = None,
+) -> ScriptStepArgument:
+    name = argument.get("name", "")
+    data = argument.get("data") or {}
+    value = data.get("value")
+    if data.get("secured") and value:
+        value = "<secured>"
+    param = parameters.get(name)
+    display = (param or {}).get("display") or {}
+    return ScriptStepArgument(
+        name=name,
+        value=value,
+        data_source=data.get("dataSource"),
+        parameter_type=(param or {}).get("dataType"),
+        mandatory=(param or {}).get("_mandatory") if param else None,
+        declared=param is not None or not parameters,
+        allowed_data_sources=list((param or {}).get("dataSources") or []),
+        allowed_values=_restriction_allowed_values(param or {}, command_id),
+        value_range=_restriction_range(param or {}),
+        label=parameter_label(command_id, name, display.get("name")),
+        declared_label=_renamed_declared_label(command_id, name, display.get("name")),
+        table_name=data.get("tableName"),
+        column=data.get("column"),
+    )
+
+
+def _step_argument_is_set(argument: ScriptStepArgument) -> bool:
+    """A DataTable binding is a value even though it carries no value field."""
+    if argument.data_source == "DATATABLE":
+        return bool(argument.table_name or argument.column)
+    return argument.value is not None and str(argument.value).strip() != ""
+
+
+def _unset_step_parameters(
+        element: dict[str, Any],
+        parameters: dict[str, dict[str, Any]],
+        command_id: Optional[str] = None,
+) -> List[ScriptStepParameter]:
+    set_names = {argument.get("name") for argument in element.get("arguments", [])}
+    unset: List[ScriptStepParameter] = []
+    for name, param in parameters.items():
+        if name in set_names:
+            continue
+        display = param.get("display") or {}
+        mandatory = bool(param.get("_mandatory"))
+        unset.append(ScriptStepParameter(
+            name=name,
+            parameter_type=param.get("dataType"),
+            mandatory=mandatory,
+            default_value=param.get("defaultValue"),
+            allowed_data_sources=list(param.get("dataSources") or []),
+            allowed_values=_restriction_allowed_values(param, command_id),
+            value_range=_restriction_range(param),
+            label=parameter_label(command_id, name, display.get("name")),
+            declared_label=_renamed_declared_label(command_id, name, display.get("name")),
+            # Some commands declare ~60 optional parameters with long help texts; carrying them
+            # all would dwarf the step itself. Names, types and accepted values are enough to
+            # edit, and get_command_definitions has the full help when it is actually needed.
+            help_text=(param.get("helpText") or display.get("helpText")) if mandatory else None,
+        ))
+    unset.sort(key=lambda parameter: (not parameter.mandatory, parameter.name))
+    return unset
+
+
+def _step_children_paths(element: dict[str, Any], step_path: str) -> List[str]:
+    if element.get("@type") == "IfStatement":
+        return [
+            f"{step_path}.b{branch_index}"
+            for branch_index, _branch in enumerate(element.get("branches", []))
+        ]
+    return [
+        f"{step_path}.{child_index}"
+        for child_index, _child in enumerate(element.get("flowElements", []))
+    ]
+
+
+def _step_detail_notes(element: dict[str, Any], detail_arguments: List[ScriptStepArgument]) -> List[str]:
+    notes: List[str] = []
+    undeclared = [argument.name for argument in detail_arguments if not argument.declared]
+    if undeclared:
+        notes.append(
+            f"Argument(s) not declared by the command: {', '.join(undeclared)}. "
+            "Perfecto ignores them at execution time; they were most likely persisted by mistake."
+        )
+    if detail_arguments:
+        notes.append(
+            "To edit, call modify_command with cmd_arguments keyed by these argument names. "
+            "Only the arguments you send change; the others keep their current value."
+        )
+    if element.get("active") is False:
+        notes.append("This step is excluded from the run; re-include it with set_command_enabled.")
+    empty_mandatory = [
+        argument.name for argument in detail_arguments
+        if argument.mandatory and not _step_argument_is_set(argument)
+    ]
+    if empty_mandatory:
+        notes.append(
+            f"Mandatory argument(s) with no value: {', '.join(empty_mandatory)}. "
+            "The step will not do anything until they are set with modify_command."
+        )
+    return notes
+
+
+def format_step_detail(
+        element: dict[str, Any],
+        item_key: str,
+        step_path: str,
+        command_definitions: Optional[list] = None,
+        statement_step_path: Optional[str] = None,
+) -> ScriptStepDetail:
+    """Full configuration of one step, joined with what its command declares."""
+    definitions_map = _definitions_map(command_definitions)
+    command_id = _command_id(element.get("command"), element.get("subcommand"))
+    parameters = _step_parameters_map(definitions_map.get(command_id) if command_id else None)
+    arguments = [
+        _step_argument(argument, parameters, command_id)
+        for argument in element.get("arguments", [])
+    ]
+    iterator = element.get("iterator") or {}
+    return ScriptStepDetail(
+        item_key=item_key,
+        step_path=step_path,
+        type=element.get("@type", ""),
+        name=_step_display_name(element, definitions_map),
+        command_id=command_id,
+        command=element.get("command"),
+        subcommand=element.get("subcommand"),
+        active=element.get("active", True),
+        error_policy=element.get("errorPolicy"),
+        comment=element.get("comment"),
+        arguments=arguments,
+        unset_parameters=_unset_step_parameters(element, parameters, command_id),
+        label=element.get("name") or element.get("label"),
+        statement_step_path=statement_step_path,
+        loop_count=iterator.get("count"),
+        loop_variable=iterator.get("variable"),
+        children=_step_children_paths(element, step_path),
+        notes=_step_detail_notes(element, arguments),
     )
 
 

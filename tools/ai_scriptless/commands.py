@@ -72,9 +72,22 @@ def _command_spec(
 COMMAND_SPECS: dict[str, CommandSpec] = {
     spec.command_id: spec
     for spec in (
-        _command_spec("ai_user-action", "Action", {**_HANDSET_DUT, "action": ("CONSTANT", "")}),
+        # The editor labels `action` "Prompt"; the value typed there is stored as `action`.
+        # Accepted as an alias so the name a user reads in the UI resolves to the parameter.
+        _command_spec(
+            "ai_user-action",
+            "Action",
+            {**_HANDSET_DUT, "action": ("CONSTANT", "")},
+            argument_aliases={"Prompt": "action", "prompt": "action"},
+        ),
         _command_spec("ai_validation", "Validation", {**_HANDSET_DUT, "validation": ("CONSTANT", "")}),
-        _command_spec("ai_visual-comparison", "Action", {**_HANDSET_DUT, "name": ("CONSTANT", "")}),
+        # The baseline parameter is baselineId; `name` was an early guess, kept as an alias.
+        _command_spec(
+            "ai_visual-comparison",
+            "Action",
+            {**_HANDSET_DUT, "baselineId": ("CONSTANT", "")},
+            argument_aliases={"name": "baselineId"},
+        ),
         _command_spec("comment", "Action", {"text": ("CONSTANT", "")}),
         _command_spec(
             "wait",
