@@ -1,4 +1,5 @@
 """Process-level runtime wiring shared by all tool registrations."""
+import os
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
@@ -11,6 +12,42 @@ from config.auth import (
 from config.token import PerfectoToken
 
 Transport = Literal["stdio", "streamable-http"]
+
+DEFAULT_HTTP_HOST = "127.0.0.1"
+DEFAULT_HTTP_PORT = 8000
+DEFAULT_HTTP_PATH = "/mcp"
+
+
+@dataclass(frozen=True)
+class HttpBindSettings:
+    """Listen settings used only by the streamable-http transport."""
+
+    host: str = DEFAULT_HTTP_HOST
+    port: int = DEFAULT_HTTP_PORT
+    streamable_http_path: str = DEFAULT_HTTP_PATH
+
+
+def resolve_http_bind_settings() -> HttpBindSettings:
+    """
+    Resolve FastMCP bind settings from the environment.
+
+    Cloud Run injects PORT; prefer FASTMCP_PORT when set, else PORT, else 8000.
+    """
+    host = os.getenv("FASTMCP_HOST", DEFAULT_HTTP_HOST).strip() or DEFAULT_HTTP_HOST
+    port_raw = (
+        os.getenv("FASTMCP_PORT")
+        or os.getenv("PORT")
+        or str(DEFAULT_HTTP_PORT)
+    ).strip() or str(DEFAULT_HTTP_PORT)
+    streamable_http_path = (
+        os.getenv("FASTMCP_STREAMABLE_HTTP_PATH", DEFAULT_HTTP_PATH).strip()
+        or DEFAULT_HTTP_PATH
+    )
+    return HttpBindSettings(
+        host=host,
+        port=int(port_raw),
+        streamable_http_path=streamable_http_path,
+    )
 
 
 @dataclass(frozen=True)

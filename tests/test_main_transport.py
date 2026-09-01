@@ -2,7 +2,7 @@ import pytest
 
 import main
 from config.auth import HttpAuthProvider, StdioAuthProvider
-from config.runtime import AppRuntime
+from config.runtime import AppRuntime, resolve_http_bind_settings
 
 
 class _DummyFastMCP:
@@ -47,6 +47,38 @@ class TestToWireTransport:
         assert main.to_wire_transport("docker") == "stdio"
 
 
+class TestResolveHttpBindSettings:
+    def test_defaults(self, monkeypatch):
+        monkeypatch.delenv("FASTMCP_HOST", raising=False)
+        monkeypatch.delenv("FASTMCP_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        monkeypatch.delenv("FASTMCP_STREAMABLE_HTTP_PATH", raising=False)
+
+        bind = resolve_http_bind_settings()
+
+        assert bind.host == "127.0.0.1"
+        assert bind.port == 8000
+        assert bind.streamable_http_path == "/mcp"
+
+    def test_env_overrides_and_cloud_run_port_fallback(self, monkeypatch):
+        monkeypatch.setenv("FASTMCP_HOST", "0.0.0.0")
+        monkeypatch.setenv("FASTMCP_STREAMABLE_HTTP_PATH", "/custom-mcp")
+        monkeypatch.delenv("FASTMCP_PORT", raising=False)
+        monkeypatch.setenv("PORT", "8080")
+
+        bind = resolve_http_bind_settings()
+
+        assert bind.host == "0.0.0.0"
+        assert bind.port == 8080
+        assert bind.streamable_http_path == "/custom-mcp"
+
+    def test_fastmcp_port_wins_over_port(self, monkeypatch):
+        monkeypatch.setenv("FASTMCP_PORT", "8012")
+        monkeypatch.setenv("PORT", "8080")
+
+        assert resolve_http_bind_settings().port == 8012
+
+
 class TestBuildMcpServerHttp:
     def test_http_uses_env_settings_and_stateful_http(self, monkeypatch):
         _patch_mcp_server_dependencies(monkeypatch)
@@ -72,6 +104,21 @@ class TestBuildMcpServerHttp:
         mcp, _ = main.build_mcp_server(transport="http")
 
         assert mcp.kwargs["port"] == 8080
+
+    def test_stdio_and_docker_omit_http_bind_kwargs(self, monkeypatch):
+        _patch_mcp_server_dependencies(monkeypatch)
+        monkeypatch.setenv("FASTMCP_HOST", "0.0.0.0")
+        monkeypatch.setenv("FASTMCP_PORT", "8012")
+        monkeypatch.setenv("FASTMCP_STREAMABLE_HTTP_PATH", "/custom-mcp")
+
+        mcp_stdio, _ = main.build_mcp_server(transport="stdio")
+        mcp_docker, _ = main.build_mcp_server(transport="docker")
+
+        for mcp in (mcp_stdio, mcp_docker):
+            assert "host" not in mcp.kwargs
+            assert "port" not in mcp.kwargs
+            assert "streamable_http_path" not in mcp.kwargs
+            assert "stateless_http" not in mcp.kwargs
 
 
 class TestBuildMcpServerTransportMapping:

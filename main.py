@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP, Icon
 from config.auth import run_streamable_http
 from config.perfecto import SECURITY_TOKEN_FILE_ENV_NAME, SECURITY_TOKEN_ENV_NAME, PERFECTO_CLOUD_NAME_ENV_NAME, \
     GITHUB
-from config.runtime import build_runtime
+from config.runtime import build_runtime, resolve_http_bind_settings
 from config.token import PerfectoToken, PerfectoTokenError
 from config.version import __version__, __executable__, __bundle__, __uvx__, get_version
 from server import register_tools
@@ -112,20 +112,6 @@ def build_mcp_server(
     transport name (``stdio`` or ``streamable-http``).
     """
     init_telemetry("perfecto-mcp", __version__)
-    host = "127.0.0.1"
-    port = 8000
-    streamable_http_path = "/mcp"
-    if transport == "http":
-        host = os.getenv("FASTMCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
-        # Cloud Run injects PORT; prefer FASTMCP_PORT when set, else PORT, else 8000.
-        port_raw = (
-            os.getenv("FASTMCP_PORT")
-            or os.getenv("PORT")
-            or "8000"
-        ).strip() or "8000"
-        port = int(port_raw)
-        streamable_http_path = os.getenv("FASTMCP_STREAMABLE_HTTP_PATH", "/mcp").strip() or "/mcp"
-
     # docker and stdio share process-lifetime credentials; http uses Bearer per request.
     wire_transport = to_wire_transport(transport)
     app_runtime = build_runtime(
@@ -136,15 +122,19 @@ def build_mcp_server(
 # Perfecto MCP Server
 
 """
-    mcp = FastMCP(
-        "perfecto-mcp",
-        instructions=instructions,
-        log_level=cast(LOG_LEVELS, log_level),
-        host=host,
-        port=port,
-        streamable_http_path=streamable_http_path,
-        stateless_http=False,
-    )
+    mcp_kwargs: dict = {
+        "instructions": instructions,
+        "log_level": cast(LOG_LEVELS, log_level),
+    }
+    if transport == "http":
+        bind = resolve_http_bind_settings()
+        mcp_kwargs.update(
+            host=bind.host,
+            port=bind.port,
+            streamable_http_path=bind.streamable_http_path,
+            stateless_http=False,
+        )
+    mcp = FastMCP("perfecto-mcp", **mcp_kwargs)
     register_tools(mcp, app_runtime)
     return mcp, wire_transport
 
