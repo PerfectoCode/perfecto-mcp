@@ -64,6 +64,11 @@ CMD_ARGUMENTS_COLLISION_HINT = (
 )
 
 
+def _command_arguments(args: Dict[str, Any]) -> Any:
+    """Prefer cmd_arguments; accept arguments for older clients that used that key."""
+    return args.get("cmd_arguments") or args.get("arguments")
+
+
 def _unknown_action_error(action: str, args: Dict[str, Any]) -> str:
     error = f"Action {action} not found in AI Scriptless manager tool"
     # A command argument flattened to the top level overwrites the dispatcher action with free text.
@@ -725,6 +730,7 @@ Actions:
             'action', which would collide with the action key of this tool. Always nest them in cmd_arguments,
             e.g. {"action": "add_command", "args": {"test_id": "...", "command_id": "ai_user-action",
             "cmd_arguments": {"action": "Tap on the Login button"}}}.
+            'arguments' is accepted as a backward-compatible alias for cmd_arguments.
         after_path (str, optional): Insert after this step (step_path from view_test_structure).
         parent_path (str, optional): Insert inside a container (step_path of LogicalStep, Loop, or Branch).
 - modify_command: Update command arguments and persist.
@@ -734,6 +740,7 @@ Actions:
         cmd_arguments (dict): Argument names to new values. Merge semantics: only the arguments you send are
             replaced, the rest keep their current value, and arguments cannot be removed (delete_command removes
             the whole step). Same key rules as add_command (declared parameter names, optional data_source form).
+            'arguments' is accepted as a backward-compatible alias for cmd_arguments.
 - delete_command: Remove a command from a test and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
@@ -862,8 +869,6 @@ Hints:
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
         action, args = normalize_action_args(arguments)
-        if args is None:
-            args = {}
         ai_scriptless_manager = AiScriptlessManager(token, ctx)
 
         async def _dispatch():
@@ -886,7 +891,7 @@ Hints:
                     return await ai_scriptless_manager.add_command(
                         args.get("test_id", ""),
                         args.get("command_id", ""),
-                        args.get("cmd_arguments"),
+                        _command_arguments(args),
                         args.get("after_path"),
                         args.get("parent_path"),
                     )
@@ -894,7 +899,7 @@ Hints:
                     return await ai_scriptless_manager.modify_command(
                         args.get("test_id", ""),
                         args.get("step_path", ""),
-                        args.get("cmd_arguments", {}),
+                        _command_arguments(args) or {},
                     )
                 case "delete_command":
                     return await ai_scriptless_manager.delete_command(
