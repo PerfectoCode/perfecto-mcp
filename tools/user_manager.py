@@ -12,8 +12,7 @@ from formatters.user import format_users
 from models.manager import Manager
 from models.result import BaseResult
 from telemetry import run_tool
-from tools.utils import api_request, format_sanitized_traceback
-
+from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
 
 class UserManager(Manager):
     def __init__(self, ctx: Context):
@@ -48,12 +47,10 @@ Hints:
 """
     )
     async def user(
-            action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
+            arguments: Dict[str, Any] = Field(description="Dictionary with arguments", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
-        if args is None:
-            args = {}
+        action, args = normalize_action_args(arguments)
         runtime.configure_context(ctx)
         user_manager = UserManager(ctx)
 

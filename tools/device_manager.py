@@ -13,7 +13,7 @@ from formatters.grid import format_grid_info
 from models.manager import Manager
 from models.result import BaseResult
 from telemetry import run_tool
-from tools.utils import api_request, format_sanitized_traceback
+from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
 
 
 class DeviceManager(Manager):
@@ -77,12 +77,10 @@ Actions:
 """
     )
     async def devices(
-            action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
+            arguments: Dict[str, Any] = Field(description="Dictionary with arguments", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
-        if args is None:
-            args = {}
+        action, args = normalize_action_args(arguments)
         runtime.configure_context(ctx)
         device_manager = DeviceManager(ctx)
 
