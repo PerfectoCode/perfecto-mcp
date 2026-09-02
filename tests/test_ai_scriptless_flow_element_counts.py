@@ -65,8 +65,8 @@ class TestNestedFlowElementCounts:
 
     def test_nested_if_counts_direct_child_only_not_recursive(self):
         script = new_empty_script()
-        script["flowElements"] = [build_if_statement("outer", "Outer")]
-        inner = build_if_statement("inner", "Inner")
+        script["flowElements"] = [build_if_statement("Outer")]
+        inner = build_if_statement("Inner")
         insert_flow_element(script, inner, parent_path="0.b0")
         insert_flow_element(script, _comment("deep"), parent_path="0.b0.0.b0")
         outer = script["flowElements"][0]
