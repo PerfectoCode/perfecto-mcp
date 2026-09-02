@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from config.perfecto import SECURITY_TOKEN_NOT_SET_MESSAGE, PERFECTO_CLOUD_NAME_NOT_SET_MESSAGE
 
@@ -51,6 +51,23 @@ class PerfectoToken:
             raise PerfectoTokenError("Token file is empty")
 
         return cls(token=token_val, cloud_name=cloud_name)
+
+    @classmethod
+    def from_bearer_credentials(cls, credentials: str, cloud_name: Optional[str] = None) -> "PerfectoToken":
+        """
+        Parse Bearer credential material into a PerfectoToken.
+
+        Perfecto credentials are a single security token, so the cloud name is
+        not part of them: it is supplied by the caller from the
+        ``Perfecto-Cloud-Name`` header (falling back to PERFECTO_CLOUD_NAME).
+        Does not call the Perfecto API.
+        """
+        raw = (credentials or "").strip()
+        if not raw:
+            raise PerfectoTokenError("Empty bearer credentials")
+
+        normalized_cloud_name = (cloud_name or "").strip() or None
+        return cls(token=raw, cloud_name=normalized_cloud_name)
 
     def __repr__(self):
         return "<PerfectoToken cloud_name=******** token=********>"
