@@ -28,35 +28,58 @@ def perfecto_token() -> PerfectoToken:
 
 @pytest.fixture(autouse=True)
 def offline_command_definitions(monkeypatch):
-    """Keep cmd_arguments validation offline.
+    """Keep command contracts offline.
 
-    Validation resolves declared parameters over HTTP and memoizes them, so the
-    request is stubbed out (no declared parameters = validation fails open) and the
-    cache is reset on both ends. Use declare_command_parameters to opt into validation.
+    Contracts are resolved over HTTP and memoized, so the request is stubbed out
+    (no contract = element type, error policy and validation fall back to the local
+    spec) and the cache is reset on both ends. Use declare_commands to opt in.
     """
-    definitions.reset_declared_parameters_cache()
+    definitions.reset_command_contract_cache()
 
     async def offline_api_request(*_args, **_kwargs):
         return BaseResult(error="command definitions are not fetched in tests")
 
     monkeypatch.setattr(definitions, "api_request", offline_api_request)
     yield
-    definitions.reset_declared_parameters_cache()
+    definitions.reset_command_contract_cache()
 
 
 @pytest.fixture
-def declare_command_parameters(monkeypatch, offline_command_definitions):
-    """Declare parameters per command_id: {command_id: (mandatory, optional)}."""
+def declare_commands(monkeypatch, offline_command_definitions):
+    """Declare contracts per command_id.
 
-    def declare(declarations: dict[str, tuple[list[str], list[str]]]) -> None:
+    {command_id: {"mandatory": [...], "optional": [...], "element_type": ..., "error_policy": ...}}
+    """
+
+    def declare(declarations: dict[str, dict]) -> None:
         async def fake_fetch(_token, command_id):
             declaration = declarations.get(command_id)
             if declaration is None:
                 return None
-            mandatory, optional = declaration
-            return frozenset(mandatory), frozenset(optional)
+            mandatory = frozenset(declaration.get("mandatory", ()))
+            parameters = {
+                name: definitions.ParameterContract(
+                    name=name,
+                    data_type=spec.get("data_type"),
+                    data_sources=frozenset(spec.get("data_sources", ("CONSTANT", "VARIABLE"))),
+                    mandatory=name in mandatory,
+                    default_value=spec.get("default_value"),
+                    allowed_values=tuple(spec.get("allowed_values", ())),
+                    minimum=spec.get("minimum"),
+                    maximum=spec.get("maximum"),
+                )
+                for name, spec in (declaration.get("parameters") or {}).items()
+            }
+            return definitions.CommandContract(
+                command_id=command_id,
+                mandatory=mandatory,
+                optional=frozenset(declaration.get("optional", ())),
+                element_type=declaration.get("element_type"),
+                error_policy=declaration.get("error_policy"),
+                parameters=parameters,
+            )
 
-        definitions.reset_declared_parameters_cache()
-        monkeypatch.setattr(definitions, "_fetch_declared_parameters", fake_fetch)
+        definitions.reset_command_contract_cache()
+        monkeypatch.setattr(definitions, "_fetch_command_contract", fake_fetch)
 
     return declare
