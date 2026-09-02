@@ -1,3 +1,4 @@
+import copy
 import json
 from typing import Optional, Any, Dict
 from urllib.parse import quote
@@ -12,7 +13,7 @@ from config.token import PerfectoToken, token_verify
 from formatters.ai_scriptless import format_ai_scriptless_tests, \
     format_ai_scriptless_tests_filter_values, command_selection_policy_info, \
     format_command_catalog, format_command_definitions, format_snapshots_list, \
-    format_test_structure, format_test_variables
+    format_step_detail, format_test_structure, format_test_variables
 from models.manager import Manager
 from models.result import BaseResult, PaginationResult
 from telemetry import run_tool
@@ -26,7 +27,7 @@ from tools.ai_scriptless_script import (
     build_move_test_body,
     build_snapshot_search_body,
     command_id_from_element,
-    declared_parameters,
+    command_contract,
     delete_script_variable,
     delete_element_by_path,
     empty_mandatory_note,
@@ -34,20 +35,29 @@ from tools.ai_scriptless_script import (
     find_element_by_path,
     find_step_path_for_element,
     insert_flow_element,
+    bindable_values,
+    describe_bindable_values,
+    list_script_variables,
+    variable_type_label,
     load_and_mutate,
     modify_script_variable,
     move_element_by_path,
     new_empty_script,
+    normalize_if_statement_aliases,
     persist_script,
     script_write_lock,
-    set_condition_expression,
+    find_condition_statement,
+    set_element_error_policy,
     set_element_enabled,
     split_item_key,
     item_key_file_name,
     format_test_ui_location,
     update_element_arguments,
     validate_argument_names,
+    validate_argument_values,
+    validate_variable_bindings,
 )
+from tools.ai_scriptless.definitions import SUPPORTED_ERROR_POLICIES
 from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
 
 STEP_PATH_REFRESH_NOTES = [
@@ -55,6 +65,13 @@ STEP_PATH_REFRESH_NOTES = [
     "After this operation, step paths may have changed. Call view_test_structure before the next edit; "
     "do not reuse step_path values from this response.",
 ]
+
+CONDITION_STATEMENT_HINT = (
+    "A condition has no expression: the branch taken depends on the result of the step right "
+    "before it, which must carry errorPolicy CATCH (the UI shows that step as the condition's "
+    "'Statement'). Add the deciding command before the condition and mark it with "
+    "set_command_error_policy(error_policy='CATCH'). An expression is dropped by Perfecto."
+)
 
 CMD_ARGUMENTS_COLLISION_HINT = (
     "The ai_user-action command declares a parameter named 'action', which collides with the action key "
@@ -268,6 +285,36 @@ class AiScriptlessManager(Manager):
         return _append_ui_access_info(result, self.token.cloud_name, test_id)
 
     @token_verify
+    async def view_test_step(self, test_id: str, step_path: str) -> BaseResult:
+        if not test_id:
+            return BaseResult(error="test_id is required (itemKey from list_tests)")
+        if not step_path:
+            return BaseResult(error="step_path is required (from view_test_structure)")
+
+        payload_result = await fetch_script_payload(self.token, test_id)
+        if payload_result.error:
+            return payload_result
+        payload = payload_result.result if isinstance(payload_result.result, dict) else {}
+        script = copy.deepcopy(payload.get("script", {}))
+        normalize_if_statement_aliases(script)
+        located = find_element_by_path(script, step_path)
+        if located is None:
+            return BaseResult(error=f"step_path not found: {step_path} (call view_test_structure)")
+        _, _, element = located
+
+        detail = format_step_detail(
+            element,
+            item_key=test_id,
+            step_path=step_path,
+            # The script payload already carries the definitions of the commands it uses.
+            command_definitions=payload.get("commandDefinitions"),
+            statement_step_path=find_condition_statement(script, step_path),
+        )
+        if detail.type == "IfStatement" and detail.statement_step_path is None:
+            detail.notes.append(CONDITION_STATEMENT_HINT)
+        return _append_ui_access_info(BaseResult(result=detail), self.token.cloud_name, test_id)
+
+    @token_verify
     async def add_command(
             self,
             test_id: str,
@@ -281,15 +328,22 @@ class AiScriptlessManager(Manager):
         if not command_id:
             return BaseResult(error="command_id is required (from list_commands)")
 
-        declared = await declared_parameters(self.token, command_id)
-        names_error = validate_argument_names(command_id, cmd_arguments, declared)
+        contract = await command_contract(self.token, command_id)
+        names_error = validate_argument_names(command_id, cmd_arguments, contract)
         if names_error:
             return BaseResult(error=names_error)
+        values_error = validate_argument_values(command_id, cmd_arguments, contract)
+        if values_error:
+            return BaseResult(error=values_error)
 
-        element = build_flow_element(command_id, cmd_arguments)
+        element = build_flow_element(command_id, cmd_arguments, contract)
         inserted_path: dict[str, Optional[str]] = {"step_path": None}
 
         def mutator(script: dict[str, Any]) -> None:
+            # Variable bindings need the script: the variable must exist with a matching type.
+            bindings_error = validate_variable_bindings(command_id, cmd_arguments, contract, script)
+            if bindings_error:
+                raise ValueError(bindings_error)
             insert_flow_element(script, element, after_path=after_path, parent_path=parent_path)
             inserted_path["step_path"] = find_step_path_for_element(script, element)
 
@@ -298,7 +352,7 @@ class AiScriptlessManager(Manager):
             return result
         result.result["step_path"] = inserted_path["step_path"]
         result.result["command_id"] = command_id
-        empty_note = empty_mandatory_note(command_id, cmd_arguments, declared)
+        empty_note = empty_mandatory_note(command_id, cmd_arguments, contract)
         if empty_note:
             result.result.setdefault("notes", []).append(empty_note)
         return _append_step_path_refresh_notes(result)
@@ -319,11 +373,17 @@ class AiScriptlessManager(Manager):
             _, _, element = located
             # command_id is only known after locating the step, so validation happens here.
             command_id = command_id_from_element(element)
-            declared = await declared_parameters(self.token, command_id)
-            names_error = validate_argument_names(command_id, cmd_arguments, declared)
+            contract = await command_contract(self.token, command_id)
+            names_error = validate_argument_names(command_id, cmd_arguments, contract)
             if names_error:
                 raise ValueError(names_error)
-            update_element_arguments(element, cmd_arguments)
+            values_error = validate_argument_values(command_id, cmd_arguments, contract)
+            if values_error:
+                raise ValueError(values_error)
+            bindings_error = validate_variable_bindings(command_id, cmd_arguments, contract, script)
+            if bindings_error:
+                raise ValueError(bindings_error)
+            update_element_arguments(element, cmd_arguments, contract)
 
         return _append_step_path_refresh_notes(
             await load_and_mutate(self.token, test_id, mutator)
@@ -449,15 +509,43 @@ class AiScriptlessManager(Manager):
             count: int = 1,
             after_path: Optional[str] = None,
             parent_path: Optional[str] = None,
+            variable: Optional[str] = None,
     ) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
-        if count < 1:
+        if not variable and count < 1:
             return BaseResult(error="count must be at least 1")
-        element = build_loop(count)
+
+        if variable:
+            # The UI only offers number variables here, so check before writing.
+            payload_result = await fetch_script_payload(self.token, test_id)
+            if payload_result.error:
+                return payload_result
+            script = payload_result.result.get("script", {}) if payload_result.result else {}
+            bindable = bindable_values(script)
+            data = bindable.get(variable)
+            if data is None:
+                return BaseResult(
+                    error=(
+                        f"variable '{variable}' is not defined on this test. "
+                        f"Defined: {describe_bindable_values(script)}."
+                    )
+                )
+            if variable_type_label(data) != "number":
+                return BaseResult(
+                    error=(
+                        f"a loop counts with a number variable; '{variable}' is a "
+                        f"{variable_type_label(data)}."
+                    )
+                )
+
+        element = build_loop(count, variable)
         result = await self._add_structure(test_id, element, "Loop", after_path, parent_path)
         if not result.error:
-            result.result["count"] = count
+            if variable:
+                result.result["variable"] = variable
+            else:
+                result.result["count"] = count
         return result
 
     @token_verify
@@ -471,29 +559,42 @@ class AiScriptlessManager(Manager):
     ) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
-        element = build_if_statement(expression, label)
+        if expression:
+            return BaseResult(error=CONDITION_STATEMENT_HINT)
+        element = build_if_statement(label)
         result = await self._add_structure(test_id, element, "IfStatement", after_path, parent_path)
-        if not result.error and expression:
-            result.result["expression"] = expression
+        if not result.error:
+            result.result.setdefault("notes", []).append(CONDITION_STATEMENT_HINT)
         return result
 
     @token_verify
-    async def set_condition_expression(self, test_id: str, step_path: str, expression: str) -> BaseResult:
+    async def set_command_error_policy(self, test_id: str, step_path: str, error_policy: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
         if not step_path:
-            return BaseResult(error="step_path is required (IfStatement path from view_test_structure)")
-        if not expression:
-            return BaseResult(error="expression is required")
+            return BaseResult(error="step_path is required (from view_test_structure)")
+        policy = str(error_policy or "").upper()
+        if policy not in SUPPORTED_ERROR_POLICIES:
+            return BaseResult(
+                error=(
+                    f"error_policy must be one of {', '.join(sorted(SUPPORTED_ERROR_POLICIES))}, "
+                    f"got {error_policy!r}."
+                )
+            )
 
         def mutator(script: dict[str, Any]) -> None:
-            set_condition_expression(script, step_path, expression)
+            set_element_error_policy(script, step_path, policy)
 
         result = await load_and_mutate(self.token, test_id, mutator)
         if result.error:
             return result
         result.result["step_path"] = step_path
-        result.result["expression"] = expression
+        result.result["error_policy"] = policy
+        if policy == "CATCH":
+            result.result.setdefault("notes", []).append(
+                "This step now feeds the condition that follows it; the UI shows it as that "
+                "condition's Statement."
+            )
         return _append_step_path_refresh_notes(result)
 
     @token_verify
@@ -612,7 +713,9 @@ class AiScriptlessManager(Manager):
         if payload_result.error:
             return payload_result
         script = payload_result.result.get("script", {})
-        variables = format_test_variables(script.get("variables", []))
+        # Runtime parameters live in parameters[] and plain variables in variables[]; the UI
+        # dialog lists both, so reading only one array hides half the declarations.
+        variables = format_test_variables(list_script_variables(script))
         return BaseResult(result=variables)
 
     @token_verify
@@ -629,8 +732,15 @@ class AiScriptlessManager(Manager):
         if not name:
             return BaseResult(error="name is required")
 
+        stored_value = value
+        if variable_type == "secured_string" and value:
+            encrypted = await self._encrypt_secured_value(value)
+            if encrypted.error:
+                return encrypted
+            stored_value = encrypted.result
+
         def mutator(script: dict[str, Any]) -> None:
-            add_script_variable(script, name, variable_type, value, set_at_runtime)
+            add_script_variable(script, name, variable_type, stored_value, set_at_runtime)
 
         result = await load_and_mutate(self.token, test_id, mutator)
         if result.error:
@@ -638,7 +748,26 @@ class AiScriptlessManager(Manager):
         result.result["name"] = name
         result.result["type"] = variable_type
         result.result["set_at_runtime"] = set_at_runtime
+        if variable_type == "secured_string":
+            # Never echo either the plaintext or the ciphertext back.
+            result.result["value"] = "<secured>"
         return result
+
+    async def _encrypt_secured_value(self, value: Any) -> BaseResult:
+        """Encrypt through the same endpoint the UI's lock button calls."""
+        encrypt_url = perfecto.get_ai_scriptless_api_url(self.token.cloud_name)
+        encrypt_url = encrypt_url + f"/script/variable/encrypt?value={quote(str(value), safe='')}"
+        result = await api_request(self.token, "GET", endpoint=encrypt_url)
+        if result.error:
+            return BaseResult(error=f"Could not encrypt the secured value: {result.error}")
+        ciphertext = result.result
+        if isinstance(ciphertext, dict):
+            ciphertext = ciphertext.get("value") or ciphertext.get("result")
+        if not isinstance(ciphertext, str) or not ciphertext:
+            return BaseResult(
+                error="Could not encrypt the secured value: unexpected response from Perfecto"
+            )
+        return BaseResult(result=ciphertext)
 
     @token_verify
     async def modify_test_variable(
@@ -656,8 +785,15 @@ class AiScriptlessManager(Manager):
         if value is None and variable_type is None and set_at_runtime is None:
             return BaseResult(error="At least one of value, variable_type, or set_at_runtime is required")
 
+        stored_value = value
+        if variable_type == "secured_string" and value is not None:
+            encrypted = await self._encrypt_secured_value(value)
+            if encrypted.error:
+                return encrypted
+            stored_value = encrypted.result
+
         def mutator(script: dict[str, Any]) -> None:
-            modify_script_variable(script, name, value, variable_type, set_at_runtime)
+            modify_script_variable(script, name, stored_value, variable_type, set_at_runtime)
 
         result = await load_and_mutate(self.token, test_id, mutator)
         if result.error:
@@ -709,6 +845,14 @@ Actions:
 - view_test_structure: View the hierarchical structure of an AI Scriptless test. Each step has step_path (dot-separated positional path, e.g. 0, 2.0, 5.b0.1).
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests (e.g. PRIVATE:My Folder/My Test.xml).
+- view_test_step: View the full configuration of one step (view_test_structure is the high-level tree; this is the detail).
+    Returns every persisted argument with its current value and data_source, joined with what the command declares
+    (parameter_type, mandatory, allowed_values, value_range, allowed_data_sources), plus unset_parameters: the declared
+    parameters the step does not set yet. Read it before modify_command to know the exact keys and accepted values.
+    Containers also report label, expression, loop_count and the step_path of their direct children.
+    args(dict): Dictionary with the following required parameters:
+        test_id (str): Test itemKey from list_tests.
+        step_path (str): Step path from view_test_structure (e.g. 0, 2.0, 5.b0.1).
 - list_commands: List available AI Scriptless commands from the command repository.
     Returns the catalog in result and command selection policy in info (read info before add_command when authoring tests).
     args(dict): Dictionary with the following optional parameters:
@@ -725,7 +869,13 @@ Actions:
         cmd_arguments (dict, optional): Command argument names to values. Keys must be parameter names from
             get_command_definitions (mandatory_parameters / optional_parameters); undeclared keys are rejected.
             Values are constants by default. To point an argument at a script variable instead of a constant,
-            pass {"data_source": "VARIABLE", "value": "<variable name>"} (see list_test_variables).
+            pass {"data_source": "VARIABLE", "value": "<variable name>"} (see list_test_variables), or bind it to
+            a DataTable column with {"data_source": "DATATABLE", "table_name": "<table>", "column": "<column>"}.
+            A parameter only accepts the data sources listed in allowed_data_sources by view_test_step.
+            A multivalued parameter (max_occurrences > 1, e.g. the 'value' of text_concat which needs at least
+            two) takes a list, in order, each item a constant or a binding of its own:
+            {"value": ["Hello", {"data_source": "VARIABLE", "value": "name"}]}. Sending a multivalued parameter
+            replaces its whole list, the way the UI's row editor does.
             Never flatten these keys to the top level of args: ai_user-action declares a parameter named
             'action', which would collide with the action key of this tool. Always nest them in cmd_arguments,
             e.g. {"action": "add_command", "args": {"test_id": "...", "command_id": "ai_user-action",
@@ -775,21 +925,28 @@ Actions:
 - add_loop: Add a Loop container and persist.
     args(dict): Dictionary with the following parameters:
         test_id (str, required): Test itemKey from list_tests.
-        count (int, default=1): RepeatIterator count.
+        count (int, default=1): How many times to repeat (ignored when variable is given).
+        variable (str, optional): Name of a number variable whose value decides the iterations,
+            instead of a fixed count (UI: the Loop editor's Variable mode).
         after_path (str, optional): Insert after this step path.
         parent_path (str, optional): Insert inside a container step path.
 - add_condition: Add an IfStatement condition with Then/Else branches and persist.
+    A condition has no expression. The branch taken depends on the result of the step immediately
+    before it, which must carry errorPolicy CATCH; the UI shows that step as the condition's
+    'Statement'. So: add the deciding command (typically a validation or checkpoint), mark it with
+    set_command_error_policy(error_policy='CATCH'), then add the condition after it.
     args(dict): Dictionary with the following parameters:
         test_id (str, required): Test itemKey from list_tests.
-        expression (str, optional): Condition expression.
         label (str, optional): Condition label.
         after_path (str, optional): Insert after this step path.
         parent_path (str, optional): Insert inside a container step path.
-- set_condition_expression: Set the expression on an IfStatement and persist.
+- set_command_error_policy: Set what a step does when it fails ('On-fail Result' in the UI) and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
-        step_path (str): IfStatement path from view_test_structure (e.g. 5).
-        expression (str): Condition expression.
+        step_path (str): Step path of a command (not a container) from view_test_structure.
+        error_policy (str, values=['ABORT', 'IGNORE', 'BREAK', 'CONTINUE', 'CATCH']): ABORT ends the run,
+            IGNORE reports the failure and goes on, BREAK and CONTINUE act on the enclosing loop (abort
+            outside one), CATCH feeds the result to the condition that follows the step.
 - move_command: Move a step to a new position and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
@@ -812,39 +969,60 @@ Actions:
 - view_snapshot: View the hierarchical structure of a historical snapshot (same format as view_test_structure).
     args(dict): Dictionary with the following required parameters:
         snapshot_id (str): UUID key from list_snapshots (not '<current>'; use view_test_structure for the live script).
-- list_test_variables: List script variables configured on a test (distinct from DUT parameters).
+- list_test_variables: List everything the test declares, exactly as the UI's Configure test variables dialog:
+    runtime parameters first (set_at_runtime=true, including the DUT device parameter), then plain variables.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
-- add_test_variable: Add a script variable and persist.
+- add_test_variable: Add a script variable or runtime parameter and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
-        name (str): Variable name (letters, numbers, underscore; cannot start with a number).
+        name (str): Variable name (letters, numbers, underscore; cannot start with a number). Must be unique
+            across runtime parameters and variables alike; Perfecto rejects a name declared twice.
         variable_type (str, default='string', values=['string', 'secured_string', 'number', 'boolean']): Variable type.
-        value (any, default=''): Variable value.
-        set_at_runtime (bool, default=false): When true, value is supplied at execution time.
+        value (any, default=''): Variable value. For secured_string, pass the plaintext: it is encrypted
+            through Perfecto before being stored (the UI's lock button) and never echoed back.
+        set_at_runtime (bool, default=false): True makes it a runtime variable: the stored value is only the
+            default, it is supplied when the run starts (UI: the 'Set at runtime' checkbox, then the 'Enter
+            runtime values' dialog; execute_test is that same channel, the way DUT receives its device) and it
+            may change during the execution — a command parameter declared inOutBehavior OUT writes its result
+            into the variable it names. False makes the value constant for the whole run.
 - modify_test_variable: Update a script variable and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
-        name (str): Existing variable name.
+        name (str): Existing variable name (runtime parameters included; DUT cannot be modified).
         value (any, optional): New value.
         variable_type (str, optional): New type (string, secured_string, number, boolean).
-        set_at_runtime (bool, optional): Toggle runtime parameter behavior.
+        set_at_runtime (bool, optional): Toggle between runtime parameter and variable.
 - delete_test_variable: Remove a script variable and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
-        name (str): Variable name to delete.
+        name (str): Variable name to delete (runtime parameters included; DUT cannot be deleted).
 Hints:
 - LICENSE: AI Scriptless actions require a Perfecto AI license on your cloud (administrator opt-in via feature toggle). Without it, AI commands and related MCP operations will not work. Desktop web test authoring additionally requires the Desktop Web license.
 - COVERAGE: DataTables, Scheduler (scheduled jobs), Embedded tests, and other advanced UI capabilities (folder management, rename test, restore snapshot, download as Appium, AI Assistant, Object Spy, per-step error policy, etc.) are not yet supported by this MCP tool. 
 - HELP: For product behavior and workarounds, use the perfecto_help tool: Filter by category_id='perfecto', subcategory_id_list=['ide'].
 - UI_ACCESS: No per-test URL exists. Only UI entry: cloud_url/lab/scriptless-mobile/ (cloud_url from perfecto_user read_user). For debugging or unsupported MCP tasks, link the lab URL and tell the user to open the test via Tests → Open or Manage tests using the folder tree and test name from list_tests (itemKey is MCP-only; the UI shows folders and names, not itemKey). Never invent other scriptless URLs.
 - When authoring or editing test steps, call list_commands first and follow the command selection policy in the info field.
+- Before editing an existing step, call view_test_step with its step_path: view_test_structure is a high-level tree and
+  does not show argument values, so it is not enough to know what to change.
 - cmd_arguments keys are validated against the command definitions before saving: an undeclared name is rejected with
   the list of valid parameter names instead of being persisted as a step argument that Perfecto ignores at runtime.
+- Values are validated too: a number outside the declared range, a value outside allowed_values, a non-boolean on a
+  boolean parameter, or a data_source the parameter does not accept are all rejected with the accepted options.
+  Numbers and booleans are normalized to the spelling Perfecto persists, so passing 30 or "30" is equivalent.
+- A VARIABLE binding is checked against the test: the variable must exist and its type must match the parameter
+  (a string variable cannot feed a Number parameter), the same rule the UI enforces by only offering compatible
+  variables. The error lists the variables the test defines with their types.
+- A step's failure semantics also come from the command definition: Action steps abort the test (ABORT) while
+  Validation steps are only reported (IGNORE). No need to set it, add_command applies what the command declares.
 - step_path is a dot-separated positional path without spaces (0-based indices; b0=Then branch, b1=Else). Example: root step 3 is "3"; first step inside Then of condition at 5 is "5.b0.0". Perfecto does not persist paths; they change when steps are inserted, moved, or deleted. Always call view_test_structure before the next structure edit; do not reuse step_path from a previous mutation response.
 - Use parent_path on add_command with the step_path of a LogicalStep, Loop, or Branch from view_test_structure.
 - Use add_logical_step, add_loop, and add_condition to build control-flow structures matching the UI toolbar Group, Loop, and Condition actions.
-- Script variables (list_test_variables, add/modify/delete_test_variable) are stored in script.variables[] and are distinct from the DUT parameter in script.parameters[].
+- A declaration lives in one of two places depending on 'Set at runtime': runtime parameters in script.parameters[]
+  (as Parameter, where DUT lives) and fixed-value variables in script.variables[] (as Variable). The variable actions
+  cover both, and toggling set_at_runtime moves the declaration from one to the other.
+- A VARIABLE binding on cmd_arguments can target any of them as long as the type matches the parameter
+  (a Number parameter needs a number variable), which is what the UI's variable picker filters by.
 - Snapshot behavior: every save creates a UUID history entry; comment on save_test labels '<current>'. See list_snapshots notes for details.
 - Edits persist immediately via the internal draft→script pipeline (each persist also adds snapshot history; save_test is available to re-persist unchanged content).
 - IMPORTANT: Always call list_filter_values first to get valid filter values before using any filters in list_tests. 
@@ -883,6 +1061,11 @@ Hints:
                                                                     args.get("device_under_test", {}))
                 case "view_test_structure":
                     return await ai_scriptless_manager.view_test_structure(args.get("test_id", ""))
+                case "view_test_step":
+                    return await ai_scriptless_manager.view_test_step(
+                        args.get("test_id", ""),
+                        args.get("step_path", ""),
+                    )
                 case "list_commands":
                     return await ai_scriptless_manager.list_commands(args.get("checkpoint", False))
                 case "get_command_definitions":
@@ -944,6 +1127,7 @@ Hints:
                         args.get("count", 1),
                         args.get("after_path"),
                         args.get("parent_path"),
+                        args.get("variable"),
                     )
                 case "add_condition":
                     return await ai_scriptless_manager.add_condition(
@@ -954,10 +1138,13 @@ Hints:
                         args.get("parent_path"),
                     )
                 case "set_condition_expression":
-                    return await ai_scriptless_manager.set_condition_expression(
+                    # Kept so an agent that learned the old action gets the mechanism, not silence.
+                    return BaseResult(error=CONDITION_STATEMENT_HINT)
+                case "set_command_error_policy":
+                    return await ai_scriptless_manager.set_command_error_policy(
                         args.get("test_id", ""),
                         args.get("step_path", ""),
-                        args.get("expression", ""),
+                        args.get("error_policy", ""),
                     )
                 case "move_command":
                     return await ai_scriptless_manager.move_command(

@@ -173,17 +173,50 @@ def set_element_enabled(script: dict[str, Any], step_path: StepPathInput, enable
     if located is None:
         raise ValueError(f"step_path not found: {step_path}")
     _, _, element = located
+    # The UI marks an excluded step with both fields; active alone leaves status stale.
     element["active"] = enabled
+    element["status"] = None if enabled else "DISABLED"
 
 
-def set_condition_expression(script: dict[str, Any], step_path: StepPathInput, expression: str) -> None:
+CONDITION_STATEMENT_POLICY = "CATCH"
+
+
+def set_element_error_policy(script: dict[str, Any], step_path: StepPathInput, error_policy: str) -> None:
+    """Set a step's on-failure behaviour (the UI's "On-fail Result").
+
+    CATCH is what makes a step the statement of the condition that follows it, which is
+    how a condition decides its branch — there is no expression to set.
+    """
     located = find_element_by_path(script, step_path)
     if located is None:
         raise ValueError(f"step_path not found: {step_path}")
     _, _, element = located
-    if element.get("@type") != "IfStatement":
-        raise ValueError(f"step_path must reference an IfStatement: {step_path}")
-    element["expression"] = expression
+    if element.get("@type") not in ("Action", "Validation"):
+        raise ValueError(
+            f"step_path must reference a command, not a container: {step_path}"
+        )
+    element["errorPolicy"] = error_policy
+
+
+def find_condition_statement(
+        script: dict[str, Any],
+        step_path: StepPathInput,
+) -> Optional[str]:
+    """Step path of the statement feeding an IfStatement, if it has one.
+
+    The statement is the immediately preceding sibling carrying errorPolicy CATCH; the
+    UI renders it inside the condition but the script stores it as a sibling.
+    """
+    located = find_element_by_path(script, step_path)
+    if located is None:
+        return None
+    siblings, index, element = located
+    if element.get("@type") != "IfStatement" or index == 0:
+        return None
+    previous = siblings[index - 1]
+    if previous.get("errorPolicy") != CONDITION_STATEMENT_POLICY:
+        return None
+    return find_step_path_for_element(script, previous)
 
 
 def move_element_by_path(

@@ -107,7 +107,8 @@ async def _persist_script(
     ]
     if snapshot_comment:
         result["notes"].append(
-            "The comment labels the '<current>' entry in list_snapshots (UI: Save with comment)."
+            "The comment labels the version this save created (UI: Save with comment). It shows on "
+            "'<current>' only until the next save, after which it stays with its own history entry."
         )
     else:
         result["notes"].append(
