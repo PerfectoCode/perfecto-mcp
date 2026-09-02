@@ -1,4 +1,4 @@
-from typing import Optional, Any, Dict
+from typing import Any, Dict
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -6,17 +6,17 @@ from pydantic import Field
 
 from config import perfecto
 from config.perfecto import TOOLS_PREFIX, SUPPORT_MESSAGE, get_cloud_app_url
-from config.token import PerfectoToken, token_verify
+from config.runtime import AppRuntime
+from config.token import token_verify
 from formatters.user import format_users
 from models.manager import Manager
 from models.result import BaseResult
 from telemetry import run_tool
-from tools.utils import api_request, format_sanitized_traceback
-
+from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
 
 class UserManager(Manager):
-    def __init__(self, token: Optional[PerfectoToken], ctx: Context):
-        super().__init__(token, ctx)
+    def __init__(self, ctx: Context):
+        super().__init__(ctx)
 
     @token_verify
     async def read_user(self) -> BaseResult:
@@ -35,7 +35,7 @@ class UserManager(Manager):
         return result
 
 
-def register(mcp, token: Optional[PerfectoToken]):
+def register(mcp, runtime: AppRuntime):
     @mcp.tool(
         name=f"{TOOLS_PREFIX}_user",
         description="""
@@ -47,13 +47,12 @@ Hints:
 """
     )
     async def user(
-            action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
+            arguments: Dict[str, Any] = Field(description="Dictionary with arguments", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
-        if args is None:
-            args = {}
-        user_manager = UserManager(token, ctx)
+        action, args = normalize_action_args(arguments)
+        runtime.configure_context(ctx)
+        user_manager = UserManager(ctx)
 
         async def _dispatch():
             match action:

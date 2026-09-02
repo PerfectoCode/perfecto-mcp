@@ -1,4 +1,4 @@
-from typing import Optional, Any, Dict
+from typing import Any, Dict
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -6,18 +6,19 @@ from pydantic import Field
 
 from config import perfecto
 from config.perfecto import TOOLS_PREFIX, SUPPORT_MESSAGE
-from config.token import PerfectoToken, token_verify
+from config.runtime import AppRuntime
+from config.token import token_verify
 from formatters.device import format_real_device, format_virtual_device
 from formatters.grid import format_grid_info
 from models.manager import Manager
 from models.result import BaseResult
 from telemetry import run_tool
-from tools.utils import api_request, format_sanitized_traceback
+from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
 
 
 class DeviceManager(Manager):
-    def __init__(self, token: Optional[PerfectoToken], ctx: Context):
-        super().__init__(token, ctx)
+    def __init__(self, ctx: Context):
+        super().__init__(ctx)
 
     @token_verify
     async def read_selenium_grid_info(self) -> BaseResult:
@@ -60,7 +61,7 @@ class DeviceManager(Manager):
         return await api_request(self.token, "GET", endpoint=virtual_web_url)
 
 
-def register(mcp, token: Optional[PerfectoToken]):
+def register(mcp, runtime: AppRuntime):
     @mcp.tool(
         name=f"{TOOLS_PREFIX}_devices",
         description="""
@@ -76,13 +77,12 @@ Actions:
 """
     )
     async def devices(
-            action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
+            arguments: Dict[str, Any] = Field(description="Dictionary with arguments", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
-        if args is None:
-            args = {}
-        device_manager = DeviceManager(token, ctx)
+        action, args = normalize_action_args(arguments)
+        runtime.configure_context(ctx)
+        device_manager = DeviceManager(ctx)
 
         async def _dispatch():
             match action:

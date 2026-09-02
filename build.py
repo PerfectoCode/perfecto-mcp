@@ -123,6 +123,9 @@ def run_pyinstaller(name: str, icon: str):
         '--hidden-import=opentelemetry.propagate',
         '--collect-submodules=opentelemetry',
         '--collect-all=grpc',
+        # Streamable HTTP transport: uvicorn resolves its loop/protocol
+        # implementations by name at runtime, so PyInstaller cannot see them.
+        '--collect-submodules=uvicorn',
     ])
 
 

@@ -19,6 +19,7 @@ import copy
 import pytest
 
 from formatters.ai_scriptless import PRIMARY_AI_COMMAND_IDS
+from tools.ai_scriptless.definitions import CommandContract
 from tools.ai_scriptless.elements import build_branch
 from tools.ai_scriptless_script import (
     add_script_variable,
@@ -37,11 +38,14 @@ from tools.ai_scriptless_script import (
     format_test_ui_location,
     folder_type,
     insert_flow_element,
+    list_script_variables,
+    locate_variable,
     modify_script_variable,
     move_element_by_path,
     new_empty_script,
     parse_command_id,
-    set_condition_expression,
+    find_condition_statement,
+    set_element_error_policy,
     set_element_enabled,
     split_item_key,
     item_key_file_name,
@@ -57,7 +61,7 @@ def _sample_script() -> dict:
     wait = build_flow_element("wait", {"duration": "2"})
     group = build_logical_step("Setup")
     group["flowElements"] = [build_flow_element("comment", {"text": "inside group"})]
-    condition = build_if_statement("x == 1", "Check x")
+    condition = build_if_statement("Check x")
     then_branch = condition["branches"][0]
     then_branch["flowElements"] = [build_flow_element("ai_validation", {"validation": "OK"})]
     script = new_empty_script()
@@ -147,6 +151,19 @@ class TestCommandBuilding:
         assert element["@type"] == "Validation"
         assert element["errorPolicy"] == "IGNORE"
 
+    def test_build_flow_element_prefers_declared_contract(self):
+        # A command the local spec cannot recognize as a validation by name.
+        contract = CommandContract("verify_something", element_type="Validation", error_policy="IGNORE")
+        element = build_flow_element("verify_something", None, contract)
+        assert element["@type"] == "Validation"
+        assert element["errorPolicy"] == "IGNORE"
+
+    def test_build_flow_element_falls_back_when_contract_is_silent(self):
+        contract = CommandContract("wait", element_type=None, error_policy=None)
+        element = build_flow_element("wait", {"duration": "3"}, contract)
+        assert element["@type"] == "Action"
+        assert element["errorPolicy"] == "ABORT"
+
     def test_build_flow_element_default_handset_argument(self):
         element = build_flow_element("touch_tap")
         handset_args = [arg for arg in element["arguments"] if arg["name"] == "handsetId"]
@@ -227,9 +244,11 @@ class TestStructureBuilders:
         assert dut["@type"] == "HandsetData"
 
     def test_build_logical_step(self):
+        # The UI keeps the group title in `name` (its "Name" parameter), not in `label`.
         step = build_logical_step("Group A")
         assert step["@type"] == "LogicalStep"
-        assert step["label"] == "Group A"
+        assert step["name"] == "Group A"
+        assert "label" not in step
         assert step["flowElements"] == []
 
     def test_build_loop(self):
@@ -238,15 +257,15 @@ class TestStructureBuilders:
         assert loop["iterator"]["count"] == 3
 
     def test_build_if_statement_has_branches(self):
-        condition = build_if_statement("flag", "Flag check")
+        condition = build_if_statement("Flag check")
         assert condition["@type"] == "IfStatement"
-        assert condition["expression"] == "flag"
+        assert condition["label"] == "Flag check"
         assert len(condition["branches"]) == 2
         assert condition["branches"][0]["clause"] == "THEN"
         assert condition["branches"][1]["clause"] == "ELSE"
 
     def test_build_if_statement_clauses_alias_branches(self):
-        condition = build_if_statement("flag", "Flag check")
+        condition = build_if_statement("Flag check")
         assert condition["thenClause"] is condition["branches"][0]
         assert condition["elseClause"] is condition["branches"][1]
         child = build_flow_element("comment", {"text": "in then"})
@@ -321,11 +340,26 @@ class TestScriptVariables:
         modify_script_variable(script, "flag", value=False)
         assert script["variables"][0]["data"]["value"] is False
 
-    def test_modify_script_variable_set_at_runtime(self):
+    def test_modify_script_variable_set_at_runtime_moves_it_to_parameters(self):
+        # "Set at runtime" decides the array: parameters[] for a Parameter, variables[] otherwise.
         script = new_empty_script()
         add_script_variable(script, "env", "string", "dev")
+        assert [v["data"]["name"] for v in script["variables"]] == ["env"]
+
         modify_script_variable(script, "env", set_at_runtime=True)
-        assert script["variables"][0]["@type"] == "Parameter"
+        assert script["variables"] == []
+        moved = script["parameters"][-1]
+        assert moved["@type"] == "Parameter"
+        assert moved["data"]["name"] == "env"
+
+    def test_modify_script_variable_unset_at_runtime_moves_it_back(self):
+        script = new_empty_script()
+        add_script_variable(script, "env", "string", "dev", set_at_runtime=True)
+        assert [p["data"]["name"] for p in script["parameters"]] == ["DUT", "env"]
+
+        modify_script_variable(script, "env", set_at_runtime=False)
+        assert [p["data"]["name"] for p in script["parameters"]] == ["DUT"]
+        assert script["variables"][0]["@type"] == "Variable"
 
     def test_delete_script_variable(self):
         script = new_empty_script()
@@ -463,16 +497,45 @@ class TestScriptTreeMutations:
         _, _, element = find_element_by_path(script, "0")
         assert element["active"] is False
 
-    def test_set_condition_expression(self):
+    def test_set_element_enabled_marks_status_disabled(self):
+        # The UI writes both fields; active alone leaves a stale status.
         script = _sample_script()
-        set_condition_expression(script, "3", "y > 0")
-        _, _, element = find_element_by_path(script, "3")
-        assert element["expression"] == "y > 0"
+        set_element_enabled(script, "0", False)
+        _, _, element = find_element_by_path(script, "0")
+        assert (element["active"], element["status"]) == (False, "DISABLED")
+        set_element_enabled(script, "0", True)
+        _, _, element = find_element_by_path(script, "0")
+        assert (element["active"], element["status"]) == (True, None)
 
-    def test_set_condition_expression_rejects_non_if(self):
+    def test_set_element_error_policy(self):
         script = _sample_script()
-        with pytest.raises(ValueError, match="must reference an IfStatement"):
-            set_condition_expression(script, "0", "x")
+        set_element_error_policy(script, "0", "CATCH")
+        _, _, element = find_element_by_path(script, "0")
+        assert element["errorPolicy"] == "CATCH"
+
+    def test_set_element_error_policy_rejects_a_container(self):
+        script = _sample_script()
+        with pytest.raises(ValueError, match="not a container"):
+            set_element_error_policy(script, "1", "CATCH")
+
+    def test_find_condition_statement(self):
+        # A condition is fed by the preceding sibling marked CATCH.
+        script = _sample_script()
+        assert find_condition_statement(script, "3") is None
+        set_element_error_policy(script, "2", "CATCH")
+        assert find_condition_statement(script, "3") == "2"
+
+    def test_find_condition_statement_ignores_other_policies(self):
+        script = _sample_script()
+        set_element_error_policy(script, "2", "IGNORE")
+        assert find_condition_statement(script, "3") is None
+
+    def test_find_condition_statement_requires_a_condition(self):
+        script = _sample_script()
+        assert find_condition_statement(script, "0") is None
+
+    def test_build_if_statement_carries_no_expression(self):
+        assert "expression" not in build_if_statement("Gate")
 
     def test_move_element_within_root(self):
         script = _sample_script()
@@ -510,3 +573,251 @@ class TestStripNonApiScriptFields:
         strip_non_api_script_fields(script)
         script["flowElements"][0].pop("uuid", None)
         assert script["flowElements"][0] == original["flowElements"][0]
+
+
+class TestWireFormatMatchesUi:
+    """Shapes captured from UI-authored scripts (GET /native-automation/script)."""
+
+    def test_constant_argument_shape(self):
+        element = build_flow_element("wait", {"duration": "2"})
+        data = element["arguments"][0]["data"]
+        assert data == {
+            "@type": "ConstantArgumentData",
+            "dataSource": "CONSTANT",
+            "secured": False,
+            "value": "2",
+        }
+
+    def test_variable_argument_shape(self):
+        element = build_flow_element("ai_user-action", {"action": "Tap"})
+        handset = next(a for a in element["arguments"] if a["name"] == "handsetId")
+        assert handset["data"] == {
+            "@type": "VariableArgumentData",
+            "dataSource": "VARIABLE",
+            "value": "DUT",
+        }
+
+    def test_datatable_argument_shape(self):
+        element = build_flow_element("wait", {
+            "duration": {"data_source": "DATATABLE", "table_name": "Data", "column": "secs"},
+        })
+        data = element["arguments"][0]["data"]
+        assert data == {
+            "@type": "DataTableArgumentData",
+            "dataSource": "DATATABLE",
+            "tableName": "Data",
+            "column": "secs",
+        }
+        # A DataTable binding carries no value field.
+        assert "value" not in data
+
+    def test_datatable_binding_without_column(self):
+        element = build_flow_element("wait", {"duration": {"data_source": "DATATABLE"}})
+        assert element["arguments"][0]["data"]["tableName"] is None
+        assert element["arguments"][0]["data"]["column"] is None
+
+    def test_modify_switches_argument_to_datatable(self):
+        element = build_flow_element("wait", {"duration": "2"})
+        update_element_arguments(element, {
+            "duration": {"data_source": "DATATABLE", "table_name": "T", "column": "c"},
+        })
+        data = element["arguments"][0]["data"]
+        assert data["@type"] == "DataTableArgumentData"
+        assert (data["tableName"], data["column"]) == ("T", "c")
+
+    def test_action_element_carries_validations_list(self):
+        element = build_flow_element("wait")
+        assert element["validations"] == []
+
+    def test_validation_element_omits_validations_list(self):
+        # UI-authored Validation steps have no validations[] key.
+        element = build_flow_element("ai_validation", {"validation": "OK"})
+        assert element["@type"] == "Validation"
+        assert "validations" not in element
+
+
+class TestVariableArrays:
+    """Runtime parameters live in parameters[], plain variables in variables[]."""
+
+    def test_add_runtime_parameter_lands_in_parameters(self):
+        script = new_empty_script()
+        add_script_variable(script, "env", "string", "dev", set_at_runtime=True)
+        assert script["variables"] == []
+        assert script["parameters"][-1] == {
+            "@type": "Parameter",
+            "data": {
+                "@type": "StringData",
+                "description": None,
+                "displayName": None,
+                "name": "env",
+                "secured": False,
+                "value": "dev",
+            },
+        }
+
+    def test_duplicate_name_is_rejected_across_both_arrays(self):
+        script = new_empty_script()
+        add_script_variable(script, "env", "string", "dev", set_at_runtime=True)
+        with pytest.raises(ValueError, match="variable already exists: env"):
+            add_script_variable(script, "env", "string", "other")
+
+        add_script_variable(script, "other", "string", "x")
+        with pytest.raises(ValueError, match="variable already exists: other"):
+            add_script_variable(script, "other", "string", "y", set_at_runtime=True)
+
+    def test_list_covers_both_arrays_with_parameters_first(self):
+        script = new_empty_script()
+        add_script_variable(script, "plain", "string", "x")
+        add_script_variable(script, "runtime", "string", "y", set_at_runtime=True)
+        assert [v["data"]["name"] for v in list_script_variables(script)] == [
+            "DUT", "runtime", "plain",
+        ]
+
+    def test_locate_reports_the_array_it_found(self):
+        script = new_empty_script()
+        add_script_variable(script, "plain", "string", "x")
+        add_script_variable(script, "runtime", "string", "y", set_at_runtime=True)
+        assert locate_variable(script, "plain")[0] == "variables"
+        assert locate_variable(script, "runtime")[0] == "parameters"
+        assert locate_variable(script, "DUT")[0] == "parameters"
+        assert locate_variable(script, "missing") is None
+
+    def test_modify_finds_a_runtime_parameter(self):
+        script = new_empty_script()
+        add_script_variable(script, "runtime", "string", "y", set_at_runtime=True)
+        modify_script_variable(script, "runtime", value="z")
+        assert script["parameters"][-1]["data"]["value"] == "z"
+
+    def test_delete_finds_a_runtime_parameter(self):
+        script = new_empty_script()
+        add_script_variable(script, "runtime", "string", "y", set_at_runtime=True)
+        delete_script_variable(script, "runtime")
+        assert [p["data"]["name"] for p in script["parameters"]] == ["DUT"]
+
+    def test_dut_is_listed_but_protected(self):
+        script = new_empty_script()
+        assert [v["data"]["name"] for v in list_script_variables(script)] == ["DUT"]
+        with pytest.raises(ValueError, match="cannot be modified"):
+            modify_script_variable(script, "DUT", value="DEVICE-1")
+        with pytest.raises(ValueError, match="breaks the test"):
+            delete_script_variable(script, "DUT")
+
+    def test_unsupported_existing_type_is_reported(self):
+        # A media/datatable variable cannot be edited through the four scalar types.
+        script = new_empty_script()
+        script["variables"] = [{
+            "@type": "Variable",
+            "data": {"@type": "MediaData", "name": "clip", "value": None, "secured": False},
+        }]
+        with pytest.raises(ValueError, match="Unsupported variable type: media"):
+            modify_script_variable(script, "clip", value="x")
+
+
+class TestMultivaluedArguments:
+    """A multivalued parameter persists as repeated FunctionArguments sharing the name."""
+
+    CONCAT = CommandContract(
+        "text_concat",
+        mandatory=frozenset({"variable", "value"}),
+        element_type="Action",
+        error_policy="CONTINUE",
+    )
+
+    def test_list_becomes_one_argument_per_occurrence_in_order(self):
+        # Shape captured from a UI-authored text_concat step.
+        element = build_flow_element("text_concat", {
+            "variable": {"data_source": "VARIABLE", "value": "result"},
+            "value": ["Hello", {"data_source": "VARIABLE", "value": "constStr"}],
+        }, self.CONCAT)
+        arguments = [(a["name"], a["data"]["dataSource"], a["data"].get("value"))
+                     for a in element["arguments"]]
+        assert arguments == [
+            ("variable", "VARIABLE", "result"),
+            ("value", "CONSTANT", "Hello"),
+            ("value", "VARIABLE", "constStr"),
+        ]
+
+    def test_undeclared_spec_default_is_not_injected(self):
+        # text_concat declares no handsetId; the fallback spec must not add one.
+        element = build_flow_element("text_concat", {"value": ["a", "b"]}, self.CONCAT)
+        assert all(a["name"] != "handsetId" for a in element["arguments"])
+
+    def test_spec_default_survives_without_a_contract(self):
+        element = build_flow_element("text_concat", {"value": ["a", "b"]})
+        assert any(a["name"] == "handsetId" for a in element["arguments"])
+
+    def test_modify_keeps_untouched_occurrences(self):
+        # Regression: a name-keyed dict dropped every occurrence but the last.
+        element = build_flow_element("text_concat", {
+            "variable": {"data_source": "VARIABLE", "value": "result"},
+            "value": ["Hello", "World"],
+        })
+        update_element_arguments(element, {"variable": {"data_source": "VARIABLE", "value": "other"}})
+        values = [a["data"]["value"] for a in element["arguments"] if a["name"] == "value"]
+        assert values == ["Hello", "World"]
+        result = next(a for a in element["arguments"] if a["name"] == "variable")
+        assert result["data"]["value"] == "other"
+
+    def test_modify_replaces_the_whole_list(self):
+        element = build_flow_element("text_concat", {"value": ["Hello", "World"]})
+        update_element_arguments(element, {"value": ["Bye"]})
+        values = [a["data"]["value"] for a in element["arguments"] if a["name"] == "value"]
+        assert values == ["Bye"]
+
+    def test_modify_preserves_argument_order(self):
+        element = build_flow_element("text_concat", {
+            "variable": {"data_source": "VARIABLE", "value": "result"},
+            "value": ["a", "b"],
+        })
+        update_element_arguments(element, {"value": ["c", "d"]})
+        assert [a["name"] for a in element["arguments"]] == [
+            "handsetId", "variable", "value", "value",
+        ]
+
+
+class TestLoopIterators:
+    """Shapes captured from UI-authored loops."""
+
+    def test_repeat_iterator(self):
+        assert build_loop(3)["iterator"] == {"@type": "RepeatIterator", "count": 3}
+
+    def test_variable_iterator(self):
+        loop = build_loop(variable="waitSecsNum")
+        assert loop["iterator"] == {"@type": "VariableIterator", "variable": "waitSecsNum"}
+
+    def test_variable_wins_over_count(self):
+        loop = build_loop(5, variable="n")
+        assert loop["iterator"]["@type"] == "VariableIterator"
+        assert "count" not in loop["iterator"]
+
+
+class TestBooleanNullState:
+    """A boolean variable has three states in the UI: Null, True and False."""
+
+    def test_none_is_stored_as_null(self):
+        script = new_empty_script()
+        add_script_variable(script, "flag", "boolean", None)
+        assert script["variables"][0]["data"]["value"] is None
+
+    def test_the_null_literal_is_accepted(self):
+        script = new_empty_script()
+        add_script_variable(script, "flag", "boolean", "Null")
+        assert script["variables"][0]["data"]["value"] is None
+
+    def test_true_and_false_still_work(self):
+        script = new_empty_script()
+        add_script_variable(script, "yes", "boolean", "true")
+        add_script_variable(script, "no", "boolean", False)
+        values = [v["data"]["value"] for v in script["variables"]]
+        assert values == [True, False]
+
+    def test_a_non_boolean_is_still_rejected(self):
+        script = new_empty_script()
+        with pytest.raises(ValueError, match="true, false or null"):
+            add_script_variable(script, "flag", "boolean", "maybe")
+
+    def test_modify_can_clear_a_boolean_to_null(self):
+        script = new_empty_script()
+        add_script_variable(script, "flag", "boolean", True)
+        modify_script_variable(script, "flag", value="null")
+        assert script["variables"][0]["data"]["value"] is None
