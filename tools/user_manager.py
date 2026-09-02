@@ -50,8 +50,6 @@ Hints:
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
         action, args = normalize_action_args(arguments)
-        if args is None:
-            args = {}
         user_manager = UserManager(token, ctx)
 
         async def _dispatch():

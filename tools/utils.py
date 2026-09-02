@@ -239,33 +239,3 @@ def normalize_action_args(arguments: Optional[Dict[str, Any]] = None) -> tuple[s
             args[key] = value
     return action, args
 
-
-def validate_required_args(action: str, args: Optional[Dict[str, Any]], required: list[str]) -> Optional[BaseResult]:
-    args = args or {}
-    missing = [key for key in required if key not in args or args[key] is None]
-    if not missing:
-        return None
-    missing_str = ", ".join(missing)
-    required_str = ", ".join(required)
-    return BaseResult(
-        error=(
-            f"Missing required args for action '{action}': {missing_str} not found within 'args'. "
-            f"Required args: {required_str}. Ensure parameters are passed inside the 'args' argument."
-        )
-    )
-
-
-def validate_non_empty_str_arg(
-        action: str, args: Optional[Dict[str, Any]], key: str
-) -> Optional[BaseResult]:
-    """Return BaseResult error if args[key] is missing, not a str, or only whitespace."""
-    args = args or {}
-    value = args.get(key)
-    if not isinstance(value, str) or not value.strip():
-        return BaseResult(
-            error=(
-                f"Missing required args for action '{action}': {key} must be a non-empty string "
-                f"within 'args'. Required args: {key}."
-            )
-        )
-    return None

@@ -1208,6 +1208,62 @@ class TestAiScriptlessDispatcher:
         assert result.result["command_id"] == "wait"
         assert len(captured["script"]["flowElements"]) == 1
 
+    def test_add_command_accepts_arguments_alias(self, perfecto_token, monkeypatch):
+        captured: dict = {}
+        _mock_load_and_mutate(monkeypatch, captured=captured)
+
+        tool = _register_tool(perfecto_token)
+        result = asyncio.run(_call_tool(tool, "add_command", {
+            "test_id": TEST_ID,
+            "command_id": "wait",
+            "arguments": {"duration": "7"},
+        }))
+
+        assert result.error is None
+        values = {
+            argument["name"]: argument["data"]["value"]
+            for argument in captured["script"]["flowElements"][0]["arguments"]
+        }
+        assert values["duration"] == "7"
+
+    def test_add_command_prefers_cmd_arguments_over_arguments_alias(
+            self, perfecto_token, monkeypatch):
+        captured: dict = {}
+        _mock_load_and_mutate(monkeypatch, captured=captured)
+
+        tool = _register_tool(perfecto_token)
+        result = asyncio.run(_call_tool(tool, "add_command", {
+            "test_id": TEST_ID,
+            "command_id": "wait",
+            "cmd_arguments": {"duration": "4"},
+            "arguments": {"duration": "9"},
+        }))
+
+        assert result.error is None
+        values = {
+            argument["name"]: argument["data"]["value"]
+            for argument in captured["script"]["flowElements"][0]["arguments"]
+        }
+        assert values["duration"] == "4"
+
+    def test_modify_command_accepts_arguments_alias(self, perfecto_token, monkeypatch):
+        captured: dict = {}
+        _mock_load_and_mutate(monkeypatch, _script_with_steps("wait"), captured)
+
+        tool = _register_tool(perfecto_token)
+        result = asyncio.run(_call_tool(tool, "modify_command", {
+            "test_id": TEST_ID,
+            "step_path": "0",
+            "arguments": {"duration": "5"},
+        }))
+
+        assert result.error is None
+        values = {
+            argument["name"]: argument["data"]["value"]
+            for argument in captured["script"]["flowElements"][0]["arguments"]
+        }
+        assert values["duration"] == "5"
+
     def test_routes_list_test_variables(self, perfecto_token, monkeypatch):
         script = new_empty_script()
         script["variables"] = [{
