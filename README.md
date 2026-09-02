@@ -157,6 +157,23 @@ When using custom CA certificate bundles, you must configure both:
 
 ---
 
+## Transports
+
+Perfecto MCP runs over **stdio** by default. It can also serve **streamable HTTP**, where credentials are
+resolved per request from an `Authorization: Bearer` header and the target cloud from a `Perfecto-Cloud-Name`
+header, so one server can serve several users and clouds.
+
+```bash
+perfecto-mcp --mcp http
+```
+
+Transport resolution precedence: **CLI `--mcp` > `PERFECTO_MCP_TRANSPORT` > stdio**.
+
+See [docs/hosted-http.md](docs/hosted-http.md) for client configuration, auth behavior, health probes and
+environment variables.
+
+---
+
 ## OpenTelemetry
 
 Perfecto MCP reports traces and metrics for MCP tool calls using [OpenTelemetry](https://opentelemetry.io/). This gives you visibility into which tools are used, how long they take, and when errors occur.

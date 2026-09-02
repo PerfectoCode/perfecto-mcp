@@ -9,7 +9,8 @@ from pydantic import Field
 
 from config import perfecto
 from config.perfecto import TOOLS_PREFIX, SUPPORT_MESSAGE
-from config.token import PerfectoToken, token_verify
+from config.runtime import AppRuntime
+from config.token import token_verify
 from formatters.ai_scriptless import format_ai_scriptless_tests, \
     format_ai_scriptless_tests_filter_values, command_selection_policy_info, \
     format_command_catalog, format_command_definitions, format_snapshots_list, \
@@ -123,8 +124,8 @@ def _append_ui_access_info(
 
 
 class AiScriptlessManager(Manager):
-    def __init__(self, token: Optional[PerfectoToken], ctx: Context):
-        super().__init__(token, ctx)
+    def __init__(self, ctx: Context):
+        super().__init__(ctx)
 
     @token_verify
     async def list_tests(self, args: dict[str, Any]) -> BaseResult:
@@ -818,7 +819,7 @@ class AiScriptlessManager(Manager):
         return result
 
 
-def register(mcp, token: Optional[PerfectoToken]):
+def register(mcp, runtime: AppRuntime):
     @mcp.tool(
         name=f"{TOOLS_PREFIX}_ai_scriptless",
         description="""
@@ -1047,7 +1048,8 @@ Hints:
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
         action, args = normalize_action_args(arguments)
-        ai_scriptless_manager = AiScriptlessManager(token, ctx)
+        runtime.configure_context(ctx)
+        ai_scriptless_manager = AiScriptlessManager(ctx)
 
         async def _dispatch():
             match action:

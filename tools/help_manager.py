@@ -1,7 +1,7 @@
 import asyncio
 from copy import deepcopy
 from itertools import chain
-from typing import Optional, Any, Dict, List
+from typing import Any, Dict, List
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -9,7 +9,7 @@ from pydantic import Field
 
 from config.perfecto import TOOLS_PREFIX, SUPPORT_MESSAGE, get_real_devices_extended_commands_help_url, \
     get_real_devices_extended_command_base_help_url, HELP_INDEX_URL, HELP_TOC_URL, HELP_BASE_CONTENT_URL
-from config.token import PerfectoToken
+from config.runtime import AppRuntime
 from formatters.help import format_list_real_devices_extended_commands_info, \
     format_read_real_devices_extended_command_info, format_help_info
 from models.manager import Manager
@@ -28,8 +28,8 @@ class HelpManager(Manager):
         "Help content is sourced from curated Perfecto documentation domains and is trusted by design."
     )
 
-    def __init__(self, token: Optional[PerfectoToken], ctx: Context):
-        super().__init__(token, ctx)
+    def __init__(self, ctx: Context):
+        super().__init__(ctx)
 
     async def _load_help_tree(self):
         help_index_url = HELP_INDEX_URL
@@ -241,7 +241,7 @@ class HelpManager(Manager):
                                   result_formatter_params={"base_url": real_devices_extended_command_help_url})
 
 
-def register(mcp, token: Optional[PerfectoToken]):
+def register(mcp, runtime: AppRuntime):
     @mcp.tool(
         name=f"{TOOLS_PREFIX}_help",
         description="""
@@ -270,7 +270,8 @@ Hints:
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
         action, args = normalize_action_args(arguments)
-        help_manager = HelpManager(token, ctx)
+        runtime.configure_context(ctx)
+        help_manager = HelpManager(ctx)
 
         async def _dispatch():
             match action:
