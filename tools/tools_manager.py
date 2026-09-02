@@ -16,7 +16,7 @@ from config.perfecto import (
     TOOLS_PREFIX,
     WEBSITE,
 )
-from config.token import PerfectoToken
+from config.runtime import AppRuntime
 from config.version import __bundle__, __executable__, __uvx__, __version__
 from models.manager import Manager
 from models.result import BaseResult
@@ -199,8 +199,8 @@ def _github_access_failure_result(exc: Exception) -> BaseResult:
 
 
 class ToolsManager(Manager):
-    def __init__(self, token: Optional[PerfectoToken], ctx: Context):
-        super().__init__(token, ctx)
+    def __init__(self, ctx: Context):
+        super().__init__(ctx)
 
     async def version(self) -> BaseResult:
         platform_data = _platform_info()
@@ -314,7 +314,7 @@ class ToolsManager(Manager):
         )
 
 
-def register(mcp, token: Optional[PerfectoToken]):
+def register(mcp, runtime: AppRuntime):
     @mcp.tool(
         name=f"{TOOLS_PREFIX}_tools",
         description="""
@@ -339,7 +339,8 @@ Hints:
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
         action, args = normalize_action_args(arguments)
-        tools_manager = ToolsManager(token, ctx)
+        runtime.configure_context(ctx)
+        tools_manager = ToolsManager(ctx)
 
         async def _dispatch():
             match action:

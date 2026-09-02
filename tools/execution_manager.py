@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Optional, Any, Dict
+from typing import Any, Dict
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -7,7 +7,8 @@ from pydantic import Field
 
 from config import perfecto
 from config.perfecto import TOOLS_PREFIX, SUPPORT_MESSAGE
-from config.token import PerfectoToken, token_verify
+from config.runtime import AppRuntime
+from config.token import token_verify
 from formatters.execution import format_executions
 from models.manager import Manager
 from models.result import BaseResult, PaginationResult
@@ -16,8 +17,8 @@ from tools.utils import api_request, format_sanitized_traceback, normalize_actio
 
 
 class ExecutionManager(Manager):
-    def __init__(self, token: Optional[PerfectoToken], ctx: Context):
-        super().__init__(token, ctx)
+    def __init__(self, ctx: Context):
+        super().__init__(ctx)
 
         self.metadata_map = {
             "tag_list": "tags_v2",
@@ -206,7 +207,7 @@ class ExecutionManager(Manager):
                                  result_formatter_params={"cloud_name": self.token.cloud_name})
 
 
-def register(mcp, token: Optional[PerfectoToken]):
+def register(mcp, runtime: AppRuntime):
     @mcp.tool(
         name=f"{TOOLS_PREFIX}_execution",
         description="""
@@ -259,7 +260,8 @@ Hints:
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
         action, args = normalize_action_args(arguments)
-        execution_manager = ExecutionManager(token, ctx)
+        runtime.configure_context(ctx)
+        execution_manager = ExecutionManager(ctx)
 
         async def _dispatch():
             match action:
