@@ -1,11 +1,9 @@
-from typing import Optional
-
 from mcp.server.fastmcp import Context
 
-from config.token import PerfectoToken
+from config.context_resolution import resolve_ctx_token
 
 
 class Manager:
-    def __init__(self, token: Optional[PerfectoToken], ctx: Context):
-        self.token = token
+    def __init__(self, ctx: Context):
         self.ctx = ctx
+        self.token = resolve_ctx_token(ctx)
