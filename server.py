@@ -1,6 +1,4 @@
-from typing import Optional
-
-from config.token import PerfectoToken
+from config.runtime import AppRuntime
 from tools.ai_scriptless_manager import register as register_ai_scriptless_manager
 from tools.device_manager import register as register_device_manager
 from tools.execution_manager import register as register_execution_manager
@@ -9,17 +7,17 @@ from tools.tools_manager import register as register_tools_manager
 from tools.user_manager import register as register_user_manager
 
 
-def register_tools(mcp, token: Optional[PerfectoToken]):
+def register_tools(mcp, runtime: AppRuntime):
     """
     Register all available tools with the MCP server.
 
     Args:
         mcp: The MCP server instance
-        token: Optional Perfecto token (can be None if not configured)
+        runtime: App runtime (transport + auth port and shared collaborators)
     """
-    register_user_manager(mcp, token)
-    register_device_manager(mcp, token)
-    register_execution_manager(mcp, token)
-    register_help_manager(mcp, token)
-    register_ai_scriptless_manager(mcp, token)
-    register_tools_manager(mcp, token)
+    register_user_manager(mcp, runtime)
+    register_device_manager(mcp, runtime)
+    register_execution_manager(mcp, runtime)
+    register_help_manager(mcp, runtime)
+    register_ai_scriptless_manager(mcp, runtime)
+    register_tools_manager(mcp, runtime)
