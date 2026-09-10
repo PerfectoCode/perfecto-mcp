@@ -11,7 +11,7 @@ import traceback
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, Any, Dict
 
 import httpx
 
@@ -211,3 +211,31 @@ def get_mcp_icon_uri():
     icon_path = get_resources_path().joinpath(name)
     icon_data = base64.standard_b64encode(icon_path.read_bytes()).decode()
     return f"data:image/png;base64,{icon_data}"
+
+def normalize_action_args(arguments: Optional[Dict[str, Any]] = None) -> tuple[str, Dict[str, Any]]:
+    """
+    Normalize tool arguments to (action, args) format.
+    Supports:
+      - {"action": "x", "args": {"key": "value"}}
+      - {"action": "x", "key": "value"}  (params at top level, merged into args)
+      - {"arguments": {"action": "x", "args": {...}}}  (double-wrapped by client)
+    Top-level keys other than 'action' and 'args' are merged into args.
+    Use a single 'arguments' param so the full MCP tool call payload is received
+    (avoids Pydantic dropping extra fields when using action/args separately).
+    """
+    arguments = arguments or {}
+    # Unwrap double-nested format: {"arguments": {"action": "x", "args": {...}}}
+    inner = arguments.get("arguments")
+    if (
+            isinstance(inner, dict)
+            and len(arguments) == 1
+            and ("action" in inner or "args" in inner)
+    ):
+        arguments = inner
+    action = str(arguments.get("action") or "").strip() or ""
+    args = dict(arguments.get("args") or {})
+    for key, value in arguments.items():
+        if key not in ("action", "args"):
+            args[key] = value
+    return action, args
+

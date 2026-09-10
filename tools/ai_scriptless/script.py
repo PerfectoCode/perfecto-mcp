@@ -10,7 +10,8 @@ from tools.ai_scriptless.tree import (
     find_step_path_for_element,
     insert_flow_element,
     move_element_by_path,
-    set_condition_expression,
+    find_condition_statement,
+    set_element_error_policy,
     set_element_enabled,
     update_flow_element_counts,
 )
@@ -98,8 +99,8 @@ class Script:
     def set_element_enabled(self, step_path: StepPathInput, enabled: bool) -> None:
         set_element_enabled(self._data, step_path, enabled)
 
-    def set_condition_expression(self, step_path: StepPathInput, expression: str) -> None:
-        set_condition_expression(self._data, step_path, expression)
+    def set_element_error_policy(self, step_path: StepPathInput, error_policy: str) -> None:
+        set_element_error_policy(self._data, step_path, error_policy)
 
     def move_element_by_path(
             self,

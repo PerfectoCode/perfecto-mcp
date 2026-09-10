@@ -5,10 +5,31 @@ import os
 import sys
 from typing import Literal, cast
 
+# Patch MCP ArgModelBase so tools with an "arguments" param receive the full payload
+# when the client sends {"action": "x", "key": "value"} instead of {"arguments": {...}}
+from mcp.server.fastmcp.utilities import func_metadata
+from pydantic import model_validator
+
+_OriginalArgModelBase = func_metadata.ArgModelBase
+
+
+class _PatchedArgModelBase(_OriginalArgModelBase):
+    @model_validator(mode="before")
+    @classmethod
+    def _wrap_root_as_arguments(cls, data: object) -> object:
+        if isinstance(data, dict) and "arguments" not in data:
+            return {"arguments": data}
+        return data
+
+
+func_metadata.ArgModelBase = _PatchedArgModelBase
+
 from mcp.server.fastmcp import FastMCP, Icon
 
+from config.auth import run_streamable_http
 from config.perfecto import SECURITY_TOKEN_FILE_ENV_NAME, SECURITY_TOKEN_ENV_NAME, PERFECTO_CLOUD_NAME_ENV_NAME, \
     GITHUB
+from config.runtime import build_runtime, resolve_http_bind_settings
 from config.token import PerfectoToken, PerfectoTokenError
 from config.version import __version__, __executable__, __bundle__, __uvx__, get_version
 from server import register_tools
@@ -20,6 +41,7 @@ PERFECTO_SECURITY_TOKEN = os.getenv(SECURITY_TOKEN_ENV_NAME)
 PERFECTO_CLOUD_NAME = os.getenv(PERFECTO_CLOUD_NAME_ENV_NAME)
 
 LOG_LEVELS = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+MCP_TRANSPORTS = ("stdio", "http", "docker")
 
 
 def init_logging(level_name: str) -> None:
@@ -63,23 +85,96 @@ def get_token() -> PerfectoToken:
     return token
 
 
-def run(log_level: str = "CRITICAL"):
-    init_telemetry("perfecto-mcp", __version__)
-    token = get_token()
+def resolve_mcp_transport(raw_cli_transport: str) -> str:
+    """
+    Resolve transport with precedence: CLI > PERFECTO_MCP_TRANSPORT > stdio.
 
+    `raw_cli_transport` comes from argparse `--mcp`:
+    - empty string means `--mcp` was provided without an explicit value
+    - non-empty string means an explicit CLI transport was provided
+    """
+    raw_cli_transport = raw_cli_transport.strip()
+
+    if raw_cli_transport:
+        candidate = raw_cli_transport
+        source = "CLI --mcp"
+    else:
+        candidate = os.getenv("PERFECTO_MCP_TRANSPORT", "").strip()
+        source = "PERFECTO_MCP_TRANSPORT"
+
+    if not candidate:
+        return "stdio"
+
+    normalized = candidate.lower()
+    if normalized not in MCP_TRANSPORTS:
+        allowed = ", ".join(MCP_TRANSPORTS)
+        raise ValueError(
+            f"Invalid MCP transport '{candidate}' from {source}. "
+            f"Valid values: {allowed}."
+        )
+    return normalized
+
+
+def to_wire_transport(logical_transport: str) -> Literal["stdio", "streamable-http"]:
+    """Map CLI/logical transport (stdio|http|docker) to FastMCP wire transport."""
+    return "streamable-http" if logical_transport == "http" else "stdio"
+
+
+def build_mcp_server(
+        log_level: str = "CRITICAL",
+        transport: str = "stdio",
+) -> tuple[FastMCP, str]:
+    """
+    Build FastMCP + auth wiring for a logical CLI transport (stdio|http|docker).
+
+    Returns ``(mcp, wire_transport)`` where ``wire_transport`` is the FastMCP
+    transport name (``stdio`` or ``streamable-http``).
+    """
+    init_telemetry("perfecto-mcp", __version__)
+    # docker and stdio share process-lifetime credentials; http uses Bearer per request.
+    wire_transport = to_wire_transport(transport)
+    app_runtime = build_runtime(
+        wire_transport,
+        startup_token=get_token() if wire_transport == "stdio" else None,
+    )
     instructions = """
 # Perfecto MCP Server
 
 """
+    mcp_kwargs: dict = {
+        "instructions": instructions,
+        "log_level": cast(LOG_LEVELS, log_level),
+    }
+    if transport == "http":
+        bind = resolve_http_bind_settings()
+        mcp_kwargs.update(
+            host=bind.host,
+            port=bind.port,
+            streamable_http_path=bind.streamable_http_path,
+            stateless_http=False,
+        )
+    mcp = FastMCP("perfecto-mcp", **mcp_kwargs)
+    register_tools(mcp, app_runtime)
+    return mcp, wire_transport
 
-    mcp = FastMCP("perfecto-mcp", instructions=instructions,
-                  log_level=cast(LOG_LEVELS, log_level))
-    register_tools(mcp, token)
-    mcp.run(transport="stdio")
+
+def run(log_level: str = "CRITICAL", transport: str = "stdio"):
+    mcp, runtime_transport = build_mcp_server(
+        log_level=log_level,
+        transport=transport,
+    )
+    if runtime_transport == "stdio":
+        mcp.run(transport=runtime_transport)
+    else:
+        # Hosted HTTP requires Bearer auth middleware around the ASGI app.
+        run_streamable_http(mcp)
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="perfecto-mcp")
+    parser = argparse.ArgumentParser(
+        prog="perfecto-mcp",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
 
     parser.add_argument(
         "--version",
@@ -89,8 +184,13 @@ def main():
 
     parser.add_argument(
         "--mcp",
-        action="store_true",
-        help="Execute MCP Server"
+        nargs="?",
+        const="",
+        metavar="TRANSPORT",
+        help=(
+            "Execute MCP Server. Optional TRANSPORT values: stdio, http, docker.\n"
+            "Resolution precedence: CLI > PERFECTO_MCP_TRANSPORT > stdio."
+        ),
     )
 
     parser.add_argument(
@@ -102,9 +202,17 @@ def main():
 
     args = parser.parse_args()
     
-    if args.mcp:
-        init_logging(args.log_level)
-        run(log_level=args.log_level.upper())
+    if args.mcp is not None:
+        try:
+            transport = resolve_mcp_transport(args.mcp)
+            if transport == "docker":
+                os.environ["MCP_DOCKER"] = "true"
+            elif transport == "http":
+                os.environ["MCP_DOCKER"] = "false"
+            init_logging(args.log_level)
+            run(log_level=args.log_level.upper(), transport=transport)
+        except ValueError as e:
+            parser.error(str(e))
     else:
 
         logo_ascii = (
