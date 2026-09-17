@@ -19,6 +19,7 @@ from models.manager import Manager
 from models.result import BaseResult, PaginationResult
 from telemetry import run_tool
 from tools.ai_scriptless_script import (
+    DUT_NAME,
     add_script_variable,
     build_flow_element,
     build_if_statement,
@@ -35,9 +36,12 @@ from tools.ai_scriptless_script import (
     fetch_script_payload,
     find_element_by_path,
     find_step_path_for_element,
+    handset_constant_note,
     insert_flow_element,
     bindable_values,
     describe_bindable_values,
+    device_declarations,
+    referenced_variable_names,
     list_script_variables,
     variable_type_label,
     load_and_mutate,
@@ -184,73 +188,242 @@ class AiScriptlessManager(Manager):
             warning=warnings,
         )
 
-    @token_verify
-    async def execute_test(self, test_id: str, device_type: str, device_under_test: dict[str, Any]) -> BaseResult:
-        execute_url = perfecto.get_ai_scriptless_execution_api_url(self.token.cloud_name)
-
-        # This mapping allows us to detect when the AI gets confused and uses Perfecto-style capabilities.
-        # It also allows for reverse mapping from internal to capabilities from Perfecto.
-        att_map = {
-            "real": {
-                "device_id": "deviceId"
-            },
-            "virtual": {
-                "platform_name": "platformName",
-                "manufacturer": "manufacturer",
-                "model": "model",
-                "platform_version": "platformVersion"
-            },
-            "desktop": {
-                "platform_name": "platformName",
-                "platform_version": "platformVersion",
-                "browser_name": "browserName",
-                "browser_version": "browserVersion",
-                "resolution": "resolution",
-                "location": "location"
-            }
+    # This mapping allows us to detect when the AI gets confused and uses Perfecto-style capabilities.
+    # It also allows for reverse mapping from internal to capabilities from Perfecto.
+    DEVICE_ATTRIBUTE_MAP = {
+        "real": {
+            "device_id": "deviceId"
+        },
+        "virtual": {
+            "platform_name": "platformName",
+            "manufacturer": "manufacturer",
+            "model": "model",
+            "platform_version": "platformVersion"
+        },
+        "desktop": {
+            "platform_name": "platformName",
+            "platform_version": "platformVersion",
+            "browser_name": "browserName",
+            "browser_version": "browserVersion",
+            "resolution": "resolution",
+            "location": "location"
         }
+    }
 
-        dut = None
-        remapped_device_under_test = {}
+    def _resolve_device_param(
+            self,
+            device_type: str,
+            device: dict[str, Any],
+            label: str,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """The value a device parameter takes at run start: (value, error).
+
+        A real device is its device_id; virtual and desktop are the capabilities object,
+        serialized the way the test stores a device variable's value.
+        """
+        att_map = self.DEVICE_ATTRIBUTE_MAP.get(device_type)
+        if att_map is None:
+            accepted = ", ".join(sorted(self.DEVICE_ATTRIBUTE_MAP))
+            return None, (
+                f"Invalid device_type '{device_type}' for {label}. Accepted values: {accepted}."
+            )
+
+        remapped = {}
         # Remap the attributes to Perfecto Capabilities format
-        if device_type in att_map.keys():
-            for key in att_map[device_type].keys():
-                alt_key = att_map[device_type][key]
-                remapped_device_under_test[alt_key] = device_under_test.get(key, device_under_test.get(alt_key, None))
+        for key, alt_key in att_map.items():
+            remapped[alt_key] = device.get(key, device.get(alt_key, None))
 
         if device_type == "real":
-            dut = remapped_device_under_test.get("deviceId", None)
-            if dut is None:
-                return BaseResult(
-                    error="Invalid value for device_under_test. The key device_id could not be found."
-                )
-        elif device_type in ["virtual", "desktop"]:
-            # Verify if all the needed keys exist on the remapped version
-            key_not_found = []
-            for key in att_map[device_type].keys():
-                alt_key = att_map[device_type][key]
-                if alt_key not in remapped_device_under_test:
-                    key_not_found.append(key)
-            if len(key_not_found) == 0:
-                dut = json.dumps(remapped_device_under_test, separators=(',', ':'))
-            else:
-                keys_not_found_str = ",".join(key_not_found)
-                return BaseResult(
-                    error=f"Invalid value for device_under_test. The keys [{keys_not_found_str}] could not be found."
-                )
-        if dut is not None and len(dut) > 0:
-            body = {
-                "params": {
-                    "DUT": dut
-                },
-                "testKey": test_id,
-                "triggerType": "Manual"
-            }
-            return await api_request(self.token, "POST", endpoint=execute_url, json=body)
-        else:
-            return BaseResult(
-                error="Invalid device_type or device_under_test value."
+            device_id = remapped.get("deviceId", None)
+            if device_id is None:
+                return None, f"Invalid value for {label}. The key device_id could not be found."
+            return device_id, None
+
+        # Verify if all the needed keys exist on the remapped version
+        key_not_found = [key for key, alt_key in att_map.items() if alt_key not in remapped]
+        if key_not_found:
+            keys_not_found_str = ",".join(key_not_found)
+            return None, f"Invalid value for {label}. The keys [{keys_not_found_str}] could not be found."
+        return json.dumps(remapped, separators=(',', ':')), None
+
+    async def _real_device_inventory(self) -> Optional[dict[str, dict[str, Any]]]:
+        """Every handset this cloud knows, by device id, or None when it cannot be read.
+
+        list_real_devices only returns the available ones, and a device that was retired has
+        to be told apart from one that is merely busy, so this reads the unfiltered listing.
+        """
+        devices_url = perfecto.get_real_device_management_api_url(self.token.cloud_name)
+        result = await api_request(self.token, "POST", endpoint=devices_url, json={"device": {}})
+        if result.error or not isinstance(result.result, dict):
+            return None
+        inventory: dict[str, dict[str, Any]] = {}
+        for group in result.result.values():
+            if not isinstance(group, dict):
+                continue
+            for handset in group.get("handset") or []:
+                device_id = handset.get("deviceId") if isinstance(handset, dict) else None
+                if device_id:
+                    inventory[device_id] = handset
+        return inventory
+
+    @staticmethod
+    def _device_unusable_reason(device_id: Any, inventory: dict[str, dict[str, Any]]) -> Optional[str]:
+        """Why this device cannot be reserved, or None when it can."""
+        # Virtual and desktop devices are stored as capabilities, not as a handset id.
+        if not isinstance(device_id, str) or device_id.strip().startswith("{"):
+            return None
+        handset = inventory.get(device_id)
+        if handset is None:
+            return "this cloud does not list it (it may have been retired)"
+        if str(handset.get("available", "")).lower() != "true":
+            return f"it is {handset.get('status') or 'not available'}"
+        return None
+
+    async def _device_preflight(
+            self,
+            test_id: str,
+            supplied: dict[str, Any],
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """What this run will do with devices, before it starts: (error, warning, summary).
+
+        Perfecto answers an unreservable device with "No handset is available", which says
+        nothing about which parameter or which device.
+
+        What gets reserved: a device parameter holding a device, whether or not a step names
+        it, plus every parameter a run supplies. One left empty is skipped, and only breaks
+        the run when a step names it. Anything that cannot be established leaves the run alone.
+        """
+        payload = await fetch_script_payload(self.token, test_id)
+        if payload.error or not isinstance(payload.result, dict):
+            return None, None, None
+        script = payload.result.get("script", {})
+        # Perfecto can answer with an IfStatement whose branches[] is empty and whose
+        # thenClause holds the children; without this the steps inside it are invisible.
+        normalize_if_statement_aliases(script)
+        declarations = device_declarations(script)
+        referenced = referenced_variable_names(script)
+
+        # Perfecto drops a params entry whose name it does not know, without a word, and runs
+        # on the stored device instead: a misspelled parameter would pass as a green run.
+        unknown = sorted(name for name in supplied if name not in declarations)
+        if unknown:
+            declared = ", ".join(sorted(declarations)) or "none"
+            return (
+                f"devices_under_test names {', '.join(repr(name) for name in unknown)}, which this "
+                f"test does not declare, and Perfecto would ignore it and run on the stored device. "
+                f"Device parameters this test declares: {declared}.",
+                None,
+                None,
             )
+
+        missing_device = [
+            name for name, value in declarations.items()
+            if name in referenced and name not in supplied and not value
+        ]
+        to_verify = {name: value for name, value in supplied.items() if value}
+        to_verify.update({
+            name: value for name, value in declarations.items()
+            if name not in supplied and value
+        })
+
+        inventory = await self._real_device_inventory() if to_verify else None
+        unusable: list[str] = []
+        busy: list[str] = []
+        for name, device_id in sorted(to_verify.items()) if inventory is not None else []:
+            reason = self._device_unusable_reason(device_id, inventory)
+            source = f"device parameter '{name}'"
+            if reason:
+                unusable.append(f"{source} is set to device id '{device_id}', but {reason}.")
+            elif str((inventory.get(device_id) or {}).get("inUse", "")).lower() == "true":
+                busy.append(f"{source} ('{device_id}')")
+
+        problems = list(unusable)
+        for name in sorted(missing_device):
+            if name == DUT_NAME:
+                problems.append(
+                    "DUT holds no device and devices_under_test has no entry for it; "
+                    "add one, or store a device on DUT with modify_test_variable."
+                )
+            else:
+                example = ('{"%s": {"device_type": "real", '
+                           '"device_id": "<id from list_real_devices>"}}') % name
+                problems.append(
+                    f"device parameter '{name}' is used by a step but has no device and none "
+                    f"was passed; add it to devices_under_test, as {example}."
+                )
+        error = None
+        if problems:
+            error = (
+                f"This run would fail with 'No handset is available'. " + " ".join(problems)
+                + " Perfecto reserves a device for every device parameter that holds one, "
+                "whether or not a step uses it, plus the ones this call supplies. "
+                "Pick a device with list_real_devices, then either pass it in devices_under_test "
+                "for this run or store it with modify_test_variable(variable_type='device')."
+            )
+        warning = None
+        if busy:
+            warning = (
+                f"In use right now: {', '.join(busy)}. The run may fail to reserve them."
+            )
+        # Which device each parameter ended up on, so a run can be read back without guessing.
+        summary = None
+        if to_verify and not error:
+            described = []
+            for name, device_id in sorted(to_verify.items()):
+                origin = "passed in this call" if name in supplied else "stored in the test"
+                described.append(f"{name}={device_id} ({origin})")
+            summary = "Devices this run uses: " + ", ".join(described) + "."
+        return error, warning, summary
+
+    DEVICES_SHAPE_HINT = (
+        "devices_under_test maps a device parameter name to the device it runs on, as "
+        '{"DUT": {"device_type": "real", "device_id": "<id from list_real_devices>"}}.'
+    )
+
+    @token_verify
+    async def execute_test(
+            self,
+            test_id: str,
+            devices_under_test: Optional[dict[str, dict[str, Any]]] = None,
+    ) -> BaseResult:
+        execute_url = perfecto.get_ai_scriptless_execution_api_url(self.token.cloud_name)
+
+        if devices_under_test is not None and not isinstance(devices_under_test, dict):
+            return BaseResult(error=f"Invalid devices_under_test. {self.DEVICES_SHAPE_HINT}")
+
+        # Perfecto takes one device per parameter name, DUT included: it is the parameter every
+        # test starts with, not a different kind of argument. A parameter this call leaves out
+        # keeps the device the test stores, and one that resolves to nothing is simply skipped.
+        params: dict[str, str] = {}
+        for name, device in (devices_under_test or {}).items():
+            label = f"devices_under_test['{name}']"
+            if not isinstance(device, dict):
+                return BaseResult(error=f"Invalid {label}. {self.DEVICES_SHAPE_HINT}")
+            value, error = self._resolve_device_param(
+                device.get("device_type", "real"), device, label)
+            if error:
+                return BaseResult(error=error)
+            if not value:
+                return BaseResult(error=f"Invalid device_type or device value for {label}.")
+            params[name] = value
+
+        preflight_error, preflight_warning, device_summary = await self._device_preflight(
+            test_id, params)
+        if preflight_error:
+            return BaseResult(error=preflight_error)
+
+        body = {
+            "params": params,
+            "testKey": test_id,
+            "triggerType": "Manual"
+        }
+        result = await api_request(self.token, "POST", endpoint=execute_url, json=body)
+        if not result.error:
+            if preflight_warning:
+                result.append_warnings([preflight_warning])
+            if device_summary:
+                result.append_info([device_summary])
+        return result
 
     @token_verify
     async def list_commands(self, checkpoint: bool = False) -> BaseResult:
@@ -356,6 +529,9 @@ class AiScriptlessManager(Manager):
         empty_note = empty_mandatory_note(command_id, cmd_arguments, contract)
         if empty_note:
             result.result.setdefault("notes", []).append(empty_note)
+        constant_note = handset_constant_note(command_id, cmd_arguments, contract)
+        if constant_note:
+            result.result.setdefault("notes", []).append(constant_note)
         return _append_step_path_refresh_notes(result)
 
     @token_verify
@@ -366,6 +542,8 @@ class AiScriptlessManager(Manager):
             return BaseResult(error="step_path is required (from view_test_structure)")
         if not cmd_arguments:
             return BaseResult(error="cmd_arguments is required")
+
+        constant_note: dict[str, Optional[str]] = {"note": None}
 
         async def mutator(script: dict[str, Any]) -> None:
             located = find_element_by_path(script, step_path)
@@ -384,11 +562,13 @@ class AiScriptlessManager(Manager):
             bindings_error = validate_variable_bindings(command_id, cmd_arguments, contract, script)
             if bindings_error:
                 raise ValueError(bindings_error)
+            constant_note["note"] = handset_constant_note(command_id, cmd_arguments, contract)
             update_element_arguments(element, cmd_arguments, contract)
 
-        return _append_step_path_refresh_notes(
-            await load_and_mutate(self.token, test_id, mutator)
-        )
+        result = await load_and_mutate(self.token, test_id, mutator)
+        if not result.error and constant_note["note"]:
+            result.result.setdefault("notes", []).append(constant_note["note"])
+        return _append_step_path_refresh_notes(result)
 
     @token_verify
     async def delete_command(self, test_id: str, step_path: str) -> BaseResult:
@@ -835,14 +1015,33 @@ Actions:
     args(dict): Dictionary with the following required filter parameters:
         filter_names (list[str], values=['test_name', 'owner_list']): The filter name list.
 - execute_test: Execute a preconfigured AI Scriptless Test.
-    args(dict): Dictionary with the following required parameters:
-        test_id (str): Test ID from list_tests
-        device_type (str, default='real', values=['real', 'virtual', 'desktop']: The device type. 
-        device_under_test (dict, required): Device configuration object.
-            When device_type='real': {device_id: str} (Get from list_real_devices).
-            When device_type='virtual': {platform_name: str, manufacturer: str, model: str, platform_version: str} (Get from list_virtual_devices).
-            When device_type='desktop': {platform_name: str, platform_version: str, browser_name: str, 
-                          browser_version: str, resolution: str, location: str} (Get from list_desktop_devices).
+    A test runs on the devices its own device parameters name. Every test declares at least one, called
+    DUT; a test driving two phones declares one more per phone (list_test_variables shows them as type
+    'device'). Each parameter takes its device from devices_under_test when this call names it, and
+    otherwise from the device the test stores. A parameter that ends up with no device is skipped, and
+    only fails the run when a step uses it. What this call passes applies to this run alone: it never
+    changes what the test stores, so one test runs on different devices without being edited.
+    args(dict): Dictionary with the following parameters:
+        test_id (str, required): Test ID from list_tests.
+        devices_under_test (dict, optional): The device each device parameter runs on, keyed by the
+            parameter's name exactly as list_test_variables reports it. DUT is one of those names, not a
+            separate argument. Omit the whole argument to run on the devices the test already stores.
+            Each value describes one device:
+                device_type (str, default='real', values=['real', 'virtual', 'desktop'])
+                When device_type='real': {device_id: str} (Get from list_real_devices).
+                When device_type='virtual': {platform_name: str, manufacturer: str, model: str, platform_version: str} (Get from list_virtual_devices).
+                When device_type='desktop': {platform_name: str, platform_version: str, browser_name: str,
+                              browser_version: str, resolution: str, location: str} (Get from list_desktop_devices).
+            Entries may mix device types, and work on any device parameter whether or not it is
+            set_at_runtime. Example, for a test declaring DUT plus the parameters 'android' and 'ios' to
+            place a call from one phone to another, running DUT and 'android' on chosen devices and
+            leaving 'ios' on the device the test stores:
+                {"DUT": {"device_type": "real", "device_id": "RF8N30QRX7K"},
+                 "android": {"device_type": "real", "device_id": "R3CN206EJ7B"}}
+    Before launching, every device the run would reserve is checked against the cloud's device list, so a
+    device that was retired or disconnected since the test was authored is named, together with the
+    parameter holding it, instead of surfacing as 'No handset is available' after the run already failed.
+    The result reports which device each parameter resolved to and where it came from.
 - view_test_structure: View the hierarchical structure of an AI Scriptless test. Each step has step_path (dot-separated positional path, e.g. 0, 2.0, 5.b0.1).
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests (e.g. PRIVATE:My Folder/My Test.xml).
@@ -972,6 +1171,8 @@ Actions:
         snapshot_id (str): UUID key from list_snapshots (not '<current>'; use view_test_structure for the live script).
 - list_test_variables: List everything the test declares, exactly as the UI's Configure test variables dialog:
     runtime parameters first (set_at_runtime=true, including the DUT device parameter), then plain variables.
+    A 'device' variable reports the device_id it holds, or null when its device is chosen at run start;
+    read_real_device_info tells whether that device is still connected.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
 - add_test_variable: Add a script variable or runtime parameter and persist.
@@ -979,9 +1180,16 @@ Actions:
         test_id (str): Test itemKey from list_tests.
         name (str): Variable name (letters, numbers, underscore; cannot start with a number). Must be unique
             across runtime parameters and variables alike; Perfecto rejects a name declared twice.
-        variable_type (str, default='string', values=['string', 'secured_string', 'number', 'boolean']): Variable type.
+        variable_type (str, default='string', values=['string', 'secured_string', 'number', 'boolean', 'device']):
+            Variable type. 'device' is the type DUT has: it holds a device, and a handsetId argument only binds
+            to a device variable, so a test that drives more than one device needs one per device.
         value (any, default=''): Variable value. For secured_string, pass the plaintext: it is encrypted
             through Perfecto before being stored (the UI's lock button) and never echoed back.
+            For device, pass the device_id from list_real_devices, or the capabilities object for a virtual or
+            desktop device ({platform_name, ...}, same keys as execute_test). A device parameter holding a
+            device is reserved on every run, even when no step uses it, so an unused one costs a device.
+            Leave it empty for a device chosen at run start, the way DUT is: it then costs nothing until
+            execute_test names it in devices_under_test.
         set_at_runtime (bool, default=false): True makes it a runtime variable: the stored value is only the
             default, it is supplied when the run starts (UI: the 'Set at runtime' checkbox, then the 'Enter
             runtime values' dialog; execute_test is that same channel, the way DUT receives its device) and it
@@ -990,9 +1198,13 @@ Actions:
 - modify_test_variable: Update a script variable and persist.
     args(dict): Dictionary with the following required parameters:
         test_id (str): Test itemKey from list_tests.
-        name (str): Existing variable name (runtime parameters included; DUT cannot be modified).
-        value (any, optional): New value.
-        variable_type (str, optional): New type (string, secured_string, number, boolean).
+        name (str): Existing variable name, runtime parameters included. DUT accepts a device, which is the
+            device it runs on when execute_test supplies none, but it cannot change type or stop being a
+            runtime parameter: every step binds handsetId to it.
+        value (any, optional): New value. Passing only variable_type keeps the current value.
+        variable_type (str, optional): New type (string, secured_string, number, boolean, device). Converting a
+            string variable to device is how a test authored with plain strings becomes multi-device: the
+            device_id it held is kept.
         set_at_runtime (bool, optional): Toggle between runtime parameter and variable.
 - delete_test_variable: Remove a script variable and persist.
     args(dict): Dictionary with the following required parameters:
@@ -1001,6 +1213,9 @@ Actions:
 Hints:
 - LICENSE: AI Scriptless actions require a Perfecto AI license on your cloud (administrator opt-in via feature toggle). Without it, AI commands and related MCP operations will not work. Desktop web test authoring additionally requires the Desktop Web license.
 - COVERAGE: DataTables, Scheduler (scheduled jobs), Embedded tests, and other advanced UI capabilities (folder management, rename test, restore snapshot, download as Appium, AI Assistant, Object Spy, per-step error policy, etc.) are not yet supported by this MCP tool. 
+- The variable types this tool creates are string, secured_string, number, boolean and device. A test may also
+  declare media and datatable variables, which list_test_variables reports and view_test_step binds, but
+  add_test_variable and modify_test_variable cannot create or change them: those are authored in the UI.
 - HELP: For product behavior and workarounds, use the perfecto_help tool: Filter by category_id='perfecto', subcategory_id_list=['ide'].
 - UI_ACCESS: No per-test URL exists. Only UI entry: cloud_url/lab/scriptless-mobile/ (cloud_url from perfecto_user read_user). For debugging or unsupported MCP tasks, link the lab URL and tell the user to open the test via Tests → Open or Manage tests using the folder tree and test name from list_tests (itemKey is MCP-only; the UI shows folders and names, not itemKey). Never invent other scriptless URLs.
 - When authoring or editing test steps, call list_commands first and follow the command selection policy in the info field.
@@ -1014,6 +1229,15 @@ Hints:
 - A VARIABLE binding is checked against the test: the variable must exist and its type must match the parameter
   (a string variable cannot feed a Number parameter), the same rule the UI enforces by only offering compatible
   variables. The error lists the variables the test defines with their types.
+- MULTI-DEVICE: a step runs on the device its handsetId names, and handsetId only accepts a device variable.
+  To drive a second device (a call from one phone to another, a message between two apps): add_test_variable
+  with variable_type='device' per device, then add_command with
+  {"handsetId": {"data_source": "VARIABLE", "value": "<that variable>"}}. Give each variable its device with
+  its value, or leave it empty and name it in execute_test's devices_under_test, which keeps the
+  test reusable across devices.
+- Never bind handsetId to a CONSTANT device id. Perfecto accepts it when saving and then fails the run with
+  'No handset is available': a device is reserved for the device parameters the test declares, never for a
+  literal in a step. The only binding that reserves a device is VARIABLE on a device variable.
 - A step's failure semantics also come from the command definition: Action steps abort the test (ABORT) while
   Validation steps are only reported (IGNORE). No need to set it, add_command applies what the command declares.
 - step_path is a dot-separated positional path without spaces (0-based indices; b0=Then branch, b1=Else). Example: root step 3 is "3"; first step inside Then of condition at 5 is "5.b0.0". Perfecto does not persist paths; they change when steps are inserted, moved, or deleted. Always call view_test_structure before the next structure edit; do not reuse step_path from a previous mutation response.
@@ -1031,14 +1255,16 @@ Hints:
 - If in any result has_next_page is true, ask the user if they want to see the next page or access all pages before making a subsequent call.
 - Before executing a test, follow this validation workflow:
   1. list_tests (get and validate test_id).
-  2. Get device configuration based on device_type:
+  2. list_test_variables (the device parameters this test runs on are the ones typed 'device', and their
+     value is the device each already holds; only the ones being chosen for this run need an entry).
+  3. Get the device configuration for each entry, based on its device_type:
      - 'real': list_real_devices (get device_id).
      - 'virtual': list_virtual_devices (get platform_name, manufacturer, model, platform_version).
      - 'desktop': list_desktop_devices (get platform_name, platform_version, browser_name, browser_version, resolution, location).
-  3. On real device use read_real_device_info (verify device is available and not in use).
-  4. execute_test (execute the test).
-  5. list_report_executions with report name equal to test name and list_live_executions when the device it's in use (monitor execution progress).
-- Always check before running a test_id if the device_type and device_under_test exist and is available (when it's a real device), not use device in use or malfunctioning.
+  4. On real device use read_real_device_info (verify device is available and not in use).
+  5. execute_test (execute the test) with devices_under_test.
+  6. list_report_executions with report name equal to test name and list_live_executions when the device it's in use (monitor execution progress).
+- Always check before running a test_id that every device in devices_under_test exists and is available (when it's a real device), not use device in use or malfunctioning.
 - Always monitor a real device's operation while it's in use by checking the information with read_real_device_info.
 - Always stop the execution by stopping the live execution (make sure it's the correct execution, such as the execution name or user ID).
 """
@@ -1058,9 +1284,19 @@ Hints:
                 case "list_filter_values":
                     return await ai_scriptless_manager.list_filter_values(args.get("filter_names", []))
                 case "execute_test":
-                    return await ai_scriptless_manager.execute_test(args.get("test_id", ""),
-                                                                    args.get("device_type", ""),
-                                                                    args.get("device_under_test", {}))
+                    # device_type/device_under_test/devices were one concept split in three;
+                    # naming them now is a mistake worth a straight answer, not a silent run.
+                    retired = [key for key in ("device_type", "device_under_test", "devices")
+                               if key in args]
+                    if retired:
+                        return BaseResult(
+                            error=f"{', '.join(retired)} no longer exist on execute_test. "
+                                  f"{AiScriptlessManager.DEVICES_SHAPE_HINT}"
+                        )
+                    return await ai_scriptless_manager.execute_test(
+                        args.get("test_id", ""),
+                        args.get("devices_under_test", None),
+                    )
                 case "view_test_structure":
                     return await ai_scriptless_manager.view_test_structure(args.get("test_id", ""))
                 case "view_test_step":
