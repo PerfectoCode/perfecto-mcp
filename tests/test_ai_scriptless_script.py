@@ -318,6 +318,45 @@ class TestScriptVariables:
         assert entry["data"]["value"] == 0
         assert len(script["variables"]) == 1
 
+    def test_add_device_variable_matches_what_the_ui_writes(self):
+        # The Select device dialog stores the device identifier under the IMEI selector,
+        # the same shape DUT has once a device is picked.
+        script = new_empty_script()
+        entry = add_script_variable(script, "android", "device", "DEVICE-123", set_at_runtime=True)
+        assert entry["@type"] == "Parameter"
+        assert entry["data"] == {
+            "@type": "HandsetData",
+            "description": None,
+            "displayName": None,
+            "key": "IMEI",
+            "name": "android",
+            "secured": False,
+            "value": "DEVICE-123",
+        }
+
+    def test_device_variable_without_a_device_is_the_runtime_picker(self):
+        # Empty means "Select device" in the UI: null, not "", exactly as DUT is declared.
+        script = new_empty_script()
+        entry = add_script_variable(script, "android", "device", "", set_at_runtime=True)
+        assert entry["data"]["value"] is None
+        assert entry["data"]["key"] is None
+
+    def test_device_variable_accepts_capabilities_for_a_virtual_or_desktop_device(self):
+        script = new_empty_script()
+        entry = add_script_variable(
+            script, "web", "device", {"platformName": "Windows", "browserName": "Chrome"})
+        assert entry["data"]["value"] == '{"platformName":"Windows","browserName":"Chrome"}'
+        assert entry["data"]["key"] == "IMEI"
+
+    def test_modify_variable_converts_a_string_to_a_device(self):
+        # The conversion the UI's "Replace variable type" dialog performs.
+        script = new_empty_script()
+        add_script_variable(script, "phone", "string", "DEVICE-123")
+        variable = modify_script_variable(script, "phone", variable_type="device")
+        assert variable["data"]["@type"] == "HandsetData"
+        assert variable["data"]["key"] == "IMEI"
+        assert variable["data"]["value"] == "DEVICE-123"
+
     def test_add_variable_rejects_duplicate(self):
         script = new_empty_script()
         add_script_variable(script, "token", "string", "abc")
@@ -694,11 +733,21 @@ class TestVariableArrays:
         delete_script_variable(script, "runtime")
         assert [p["data"]["name"] for p in script["parameters"]] == ["DUT"]
 
-    def test_dut_is_listed_but_protected(self):
+    def test_dut_takes_a_default_device_but_keeps_its_role(self):
+        # The UI's Select device dialog sets a device on DUT; what it never does is turn DUT
+        # into another type or take it out of the runtime parameters.
         script = new_empty_script()
         assert [v["data"]["name"] for v in list_script_variables(script)] == ["DUT"]
-        with pytest.raises(ValueError, match="cannot be modified"):
-            modify_script_variable(script, "DUT", value="DEVICE-1")
+
+        variable = modify_script_variable(script, "DUT", value="DEVICE-1")
+        assert variable["data"]["value"] == "DEVICE-1"
+        assert variable["data"]["key"] == "IMEI"
+        assert script["parameters"][0]["data"]["name"] == "DUT"
+
+        with pytest.raises(ValueError, match="cannot become a string"):
+            modify_script_variable(script, "DUT", variable_type="string")
+        with pytest.raises(ValueError, match="cannot stop being a runtime parameter"):
+            modify_script_variable(script, "DUT", set_at_runtime=False)
         with pytest.raises(ValueError, match="breaks the test"):
             delete_script_variable(script, "DUT")
 
