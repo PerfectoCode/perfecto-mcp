@@ -659,6 +659,15 @@ class TestValidateVariableBindings:
         )
         assert "'duration' is declared INTEGER" in error
 
+    def test_validates_variable_bindings_inside_multivalued_parameters(self):
+        error = validate_variable_bindings(
+            "text_concat",
+            {"value": ["a", {"data_source": "VARIABLE", "value": "nope"}]},
+            CONCAT,
+            _script_with_variables(),
+        )
+        assert "variable 'nope', which this test does not define" in error
+
 
 class TestErrorPolicyCoverage:
     """The legacy IDE documents five policies; all of them must survive parsing."""
