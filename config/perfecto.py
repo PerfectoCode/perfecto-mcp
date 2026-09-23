@@ -8,8 +8,8 @@ SECURITY_TOKEN_FILE_ENV_NAME: str = "PERFECTO_SECURITY_TOKEN_FILE"
 SECURITY_TOKEN_ENV_NAME: str = "PERFECTO_SECURITY_TOKEN"
 PERFECTO_CLOUD_NAME_ENV_NAME: str = 'PERFECTO_CLOUD_NAME'
 
-SECURITY_TOKEN_NOT_SET_MESSAGE: str = f"Perfecto Security Token not set. Set environment variable {SECURITY_TOKEN_FILE_ENV_NAME} or {SECURITY_TOKEN_ENV_NAME}"
-PERFECTO_CLOUD_NAME_NOT_SET_MESSAGE: str = f"Perfecto Environment Cloud Name not set. Set environment variable {PERFECTO_CLOUD_NAME_ENV_NAME}"
+SECURITY_TOKEN_NOT_SET_MESSAGE: str = f"Perfecto Security Token not set. Set environment variable {SECURITY_TOKEN_FILE_ENV_NAME} or {SECURITY_TOKEN_ENV_NAME}, or send it as 'Authorization: Bearer <security-token>' when connecting over HTTP"
+PERFECTO_CLOUD_NAME_NOT_SET_MESSAGE: str = f"Perfecto Environment Cloud Name not set. Set environment variable {PERFECTO_CLOUD_NAME_ENV_NAME}, or send the 'Perfecto-Cloud-Name' header when connecting over HTTP"
 
 HELP_TOC_URL = "https://help.perfecto.io/perfecto-help/Data/Tocs/"
 HELP_INDEX_URL = f"{HELP_TOC_URL}perfecto_help.js"

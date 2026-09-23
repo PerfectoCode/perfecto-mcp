@@ -23,12 +23,13 @@ from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from config.perfecto import TOOLS_PREFIX, SUPPORT_MESSAGE
-from config.token import PerfectoToken
+from config.runtime import AppRuntime
 from models.manager import Manager
 from models.result import BaseResult
 from telemetry import run_tool
 from tools.skills_utils import list_skills, read_skill_definition, read_skill_file, parse_skill_uri, \
     is_skill_uri, list_skill_resources_uri
+from tools.utils import format_sanitized_traceback, normalize_action_args
 
 
 # This it's based on the ideas behind Anthropic Skills
@@ -42,8 +43,8 @@ class SkillsManager(Manager):
         "Skills content is sourced from curated repository resources and is trusted by design."
     )
 
-    def __init__(self, token: Optional[PerfectoToken], ctx: Context):
-        super().__init__(token, ctx)
+    def __init__(self, ctx: Context):
+        super().__init__(ctx)
 
     @staticmethod
     async def list_skills() -> BaseResult:
@@ -157,7 +158,7 @@ class SkillsManager(Manager):
         )
 
 
-def register(mcp, token: Optional[PerfectoToken]):
+def register(mcp, runtime: AppRuntime):
     @mcp.resource("perfecto-skill-{skill_name}://{path}")
     def universal_skills_handler(skill_name: str, path: str) -> str:
         path = unquote(path)
@@ -196,14 +197,12 @@ Hints:
 """
     )
     async def skills(
-            action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
+            arguments: Dict[str, Any] = Field(description="Dictionary with arguments", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
-        if args is None:
-            args = {}
-
-        skills_manager = SkillsManager(token, ctx)
+        action, args = normalize_action_args(arguments)
+        runtime.configure_context(ctx)
+        skills_manager = SkillsManager(ctx)
 
         async def _dispatch():
             match action:
@@ -231,14 +230,14 @@ Hints:
                         async with semaphore:
                             try:
                                 # Recursively call the skills function itself
-                                return await skills(sub_action, sub_args, ctx)
+                                return await skills({"action": sub_action, "args": sub_args}, ctx)
                             except httpx.HTTPStatusError:
                                 return BaseResult(
-                                    error=f"HTTP error in sub-action {sub_action}: {traceback.format_exc()}"
+                                    error=f"HTTP error in sub-action {sub_action}: {format_sanitized_traceback()}"
                                 )
                             except Exception:
                                 return BaseResult(
-                                    error=f"Error in sub-action {sub_action}: {traceback.format_exc()}\n{SUPPORT_MESSAGE}")
+                                    error=f"Error in sub-action {sub_action}: {format_sanitized_traceback()}\n{SUPPORT_MESSAGE}")
 
                     # Parallel execution with asyncio.gather
                     results = await asyncio.gather(*[process_call(call) for call in batch_calls],
@@ -258,9 +257,9 @@ Hints:
             return await run_tool(f"{TOOLS_PREFIX}_skills", action, ctx, _dispatch)
         except httpx.HTTPStatusError:
             return BaseResult(
-                error=f"Error: {traceback.format_exc()}"
+                error=f"Error: {format_sanitized_traceback()}"
             )
         except Exception:
             return BaseResult(
-                error=f"Error: {traceback.format_exc()}\n{SUPPORT_MESSAGE}"
+                error=f"Error: {format_sanitized_traceback()}\n{SUPPORT_MESSAGE}"
             )
