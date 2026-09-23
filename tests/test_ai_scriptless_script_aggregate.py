@@ -78,7 +78,8 @@ class TestScriptVariables:
     def test_add_list_modify_delete_variable(self):
         script = Script.empty()
         script.add_variable("token", "string", "abc")
-        assert len(script.list_variables()) == 1
+        # The listing covers both arrays, so DUT (a runtime parameter) is included.
+        assert [v["data"]["name"] for v in script.list_variables()] == ["DUT", "token"]
         script.modify_variable("token", value="xyz")
         assert script.find_variable("token")[1]["data"]["value"] == "xyz"
         script.delete_variable("token")
