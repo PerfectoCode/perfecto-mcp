@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import sys
+from contextlib import contextmanager
 from typing import Literal, cast
 
 # Patch MCP ArgModelBase so tools with an "arguments" param receive the full payload
@@ -22,7 +23,14 @@ class _PatchedArgModelBase(_OriginalArgModelBase):
         return data
 
 
-func_metadata.ArgModelBase = _PatchedArgModelBase
+@contextmanager
+def _patched_arg_model_base():
+    original = func_metadata.ArgModelBase
+    func_metadata.ArgModelBase = _PatchedArgModelBase
+    try:
+        yield
+    finally:
+        func_metadata.ArgModelBase = original
 
 from mcp.server.fastmcp import FastMCP, Icon
 
@@ -165,7 +173,8 @@ def build_mcp_server(
             stateless_http=False,
         )
     mcp = FastMCP("perfecto-mcp", **mcp_kwargs)
-    register_tools(mcp, app_runtime)
+    with _patched_arg_model_base():
+        register_tools(mcp, app_runtime)
     return mcp, wire_transport
 
 
