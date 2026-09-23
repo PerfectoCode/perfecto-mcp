@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import sys
+from contextlib import contextmanager
 from typing import Literal, cast
 
 # Patch MCP ArgModelBase so tools with an "arguments" param receive the full payload
@@ -22,7 +23,14 @@ class _PatchedArgModelBase(_OriginalArgModelBase):
         return data
 
 
-func_metadata.ArgModelBase = _PatchedArgModelBase
+@contextmanager
+def _patched_arg_model_base():
+    original = func_metadata.ArgModelBase
+    func_metadata.ArgModelBase = _PatchedArgModelBase
+    try:
+        yield
+    finally:
+        func_metadata.ArgModelBase = original
 
 from mcp.server.fastmcp import FastMCP, Icon
 
@@ -140,6 +148,17 @@ def build_mcp_server(
     instructions = """
 # Perfecto MCP Server
 
+## Proactive Knowledge Consultation
+
+- **ALWAYS consult Perfecto Skills and Help tools first** before answering questions about Perfecto features, authoring AI Scriptless tests, interpreting results, troubleshooting, or providing recommendations.
+- **Use `perfecto_skills`**: Access specialized knowledge about Perfecto capabilities (starting with AI Scriptless), best practices, and official getting-started guidance.
+- **Use `perfecto_help`**: Consult live Perfecto documentation (category_id='perfecto', subcategory_id_list=['ide'] for AI Scriptless).
+- **Golden rule**: If you're not 100% certain about something related to Perfecto, consult Skills or Help first, and if you need to search online, prioritize help.perfecto.io.
+
+## Important Guidelines
+- **Batch Operations**: When making multiple calls to the same tool, check if that tool supports a `batch` action and use it instead of separate calls.
+- **Don't assume / Don't invent**: If something is unclear, consult Skills/Help before responding.
+- **Provide resources**: Include markdown-formatted links to Perfecto help documentation when relevant.
 """
     mcp_kwargs: dict = {
         "instructions": instructions,
@@ -154,7 +173,8 @@ def build_mcp_server(
             stateless_http=False,
         )
     mcp = FastMCP("perfecto-mcp", **mcp_kwargs)
-    register_tools(mcp, app_runtime)
+    with _patched_arg_model_base():
+        register_tools(mcp, app_runtime)
     return mcp, wire_transport
 
 

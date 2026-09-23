@@ -1001,7 +1001,7 @@ Actions:
 Hints:
 - LICENSE: AI Scriptless actions require a Perfecto AI license on your cloud (administrator opt-in via feature toggle). Without it, AI commands and related MCP operations will not work. Desktop web test authoring additionally requires the Desktop Web license.
 - COVERAGE: DataTables, Scheduler (scheduled jobs), Embedded tests, and other advanced UI capabilities (folder management, rename test, restore snapshot, download as Appium, AI Assistant, Object Spy, per-step error policy, etc.) are not yet supported by this MCP tool. 
-- HELP: For product behavior and workarounds, use the perfecto_help tool: Filter by category_id='perfecto', subcategory_id_list=['ide'].
+- HELP: For product behavior and workarounds, use the perfecto_skills tool (skill `perfecto-ai-scriptless`) and/or the perfecto_help tool: Filter by category_id='perfecto', subcategory_id_list=['ide'].
 - UI_ACCESS: No per-test URL exists. Only UI entry: cloud_url/lab/scriptless-mobile/ (cloud_url from perfecto_user read_user). For debugging or unsupported MCP tasks, link the lab URL and tell the user to open the test via Tests → Open or Manage tests using the folder tree and test name from list_tests (itemKey is MCP-only; the UI shows folders and names, not itemKey). Never invent other scriptless URLs.
 - When authoring or editing test steps, call list_commands first and follow the command selection policy in the info field.
 - Before editing an existing step, call view_test_step with its step_path: view_test_structure is a high-level tree and
@@ -1047,8 +1047,8 @@ Hints:
             arguments: Dict[str, Any] = Field(description="Dictionary with arguments", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
-        action, args = normalize_action_args(arguments)
         runtime.configure_context(ctx)
+        action, args = normalize_action_args(arguments)
         ai_scriptless_manager = AiScriptlessManager(ctx)
 
         async def _dispatch():

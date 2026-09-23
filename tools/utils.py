@@ -8,6 +8,7 @@ import platform
 import re
 import sys
 import traceback
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
@@ -233,9 +234,9 @@ def normalize_action_args(arguments: Optional[Dict[str, Any]] = None) -> tuple[s
     ):
         arguments = inner
     action = str(arguments.get("action") or "").strip() or ""
-    args = dict(arguments.get("args") or {})
+    raw_args = arguments.get("args")
+    args = dict(raw_args) if isinstance(raw_args, Mapping) else {}
     for key, value in arguments.items():
         if key not in ("action", "args"):
             args[key] = value
     return action, args
-
