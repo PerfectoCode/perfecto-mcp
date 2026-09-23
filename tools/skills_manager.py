@@ -230,7 +230,7 @@ Hints:
                         async with semaphore:
                             try:
                                 # Recursively call the skills function itself
-                                return await skills({"action": sub_action, "args": sub_args}, ctx)
+                                return await skills(arguments={"action": sub_action, "args": sub_args}, ctx=ctx)
                             except httpx.HTTPStatusError:
                                 return BaseResult(
                                     error=f"HTTP error in sub-action {sub_action}: {format_sanitized_traceback()}"
