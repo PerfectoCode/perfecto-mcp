@@ -81,6 +81,11 @@ class TestNormalizeActionArgs:
         assert action == "list_tests"
         assert args == {}
 
+    def test_non_mapping_args_value_becomes_empty_dict(self):
+        action, args = normalize_action_args({"action": "list_tests", "args": "bad"})
+        assert action == "list_tests"
+        assert args == {}
+
     def test_args_is_never_none(self):
         _, args = normalize_action_args(None)
         assert args is not None
