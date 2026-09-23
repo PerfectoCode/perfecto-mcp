@@ -31,7 +31,7 @@ dev = ["pytest>=9.0.2"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["tools*", "config", "models", "formatters", "resources"]
+include = ["tools*", "config", "models", "formatters", "resources", "update"]
 
 [tool.setuptools.package-data]
 "resources" = ["*.png"]
