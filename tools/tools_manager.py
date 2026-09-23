@@ -17,11 +17,12 @@ from config.perfecto import (
     WEBSITE,
 )
 from config.platform_names import normalize_arch, normalize_system
-from config.token import PerfectoToken
+from config.runtime import AppRuntime
 from config.version import __bundle__, __executable__, __uvx__, __version__
 from models.manager import Manager
 from models.result import BaseResult
 from telemetry import run_tool
+from tools.utils import normalize_action_args
 from update.flow import describe_manual_update_instructions
 from update.processes import find_other_instances
 from update.release import (
@@ -180,8 +181,8 @@ def _github_access_failure_result(exc: Exception) -> BaseResult:
 
 
 class ToolsManager(Manager):
-    def __init__(self, token: Optional[PerfectoToken], ctx: Context):
-        super().__init__(token, ctx)
+    def __init__(self, ctx: Context):
+        super().__init__(ctx)
 
     async def version(self) -> BaseResult:
         platform_data = _platform_info()
@@ -322,7 +323,7 @@ class ToolsManager(Manager):
         )
 
 
-def register(mcp, token: Optional[PerfectoToken]):
+def register(mcp, runtime: AppRuntime):
     @mcp.tool(
         name=f"{TOOLS_PREFIX}_tools",
         description="""
@@ -347,13 +348,12 @@ Hints:
 """
     )
     async def tools(
-            action: str = Field(description="The action id to execute"),
-            args: Dict[str, Any] = Field(description="Dictionary with parameters", default=None),
+            arguments: Dict[str, Any] = Field(description="Dictionary with arguments", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
-        if args is None:
-            args = {}
-        tools_manager = ToolsManager(token, ctx)
+        action, args = normalize_action_args(arguments)
+        runtime.configure_context(ctx)
+        tools_manager = ToolsManager(ctx)
 
         async def _dispatch():
             match action:

@@ -91,7 +91,7 @@ def _clause_child_commands(ifs: dict) -> list[str | None]:
 
 class TestIfStatementBuilderContract:
     def test_new_builder_aliases_clauses_to_branches(self):
-        ifs = build_if_statement("x", "Check")
+        ifs = build_if_statement("Check")
         assert ifs["thenClause"] is ifs["branches"][0]
         assert ifs["elseClause"] is ifs["branches"][1]
 
@@ -183,7 +183,7 @@ class TestNormalizeIfStatementAliases:
 
     def test_nested_if_inside_then_branch(self):
         inner = _api_style_if_statement(then_in_clause=[_comment("inner")])
-        outer = build_if_statement("outer", "Outer")
+        outer = build_if_statement("Outer")
         outer["branches"][0]["flowElements"] = [inner]
         outer["thenClause"] = build_branch("THEN")
         script = _script_with_if_statement(outer)
@@ -248,7 +248,7 @@ class TestIfStatementTreeAfterNormalize:
         assert element["command"] == "comment"
 
     def test_insert_nested_condition_in_then(self, script: dict):
-        inner = build_if_statement("inner", "Inner")
+        inner = build_if_statement("Inner")
         insert_flow_element(script, inner, parent_path="0.b0")
         nested = script["flowElements"][0]["branches"][0]["flowElements"][0]
         assert nested["thenClause"] is nested["branches"][0]

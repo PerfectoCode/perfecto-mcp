@@ -223,3 +223,46 @@ class TestLoadAndMutate:
         )
 
         assert result.error == "not found"
+
+
+class TestLoadAndMutateAsyncMutator:
+    """Mutators may be async when they need the API before mutating (command definitions)."""
+
+    @staticmethod
+    def _mock_script_io(monkeypatch, persisted: dict):
+        async def fake_fetch(_token, _test_id):
+            return BaseResult(result={"script": new_empty_script()})
+
+        async def fake_persist(_token, item_key, mutated_script, saved_script, snapshot_comment=None):
+            persisted["item_key"] = item_key
+            persisted["flow_count"] = len(mutated_script.get("flowElements", []))
+            return BaseResult(result={"status": "ok"})
+
+        monkeypatch.setattr(persistence, "fetch_script_payload", fake_fetch)
+        monkeypatch.setattr(persistence, "_persist_script", fake_persist)
+
+    def test_awaits_async_mutator_before_persisting(self, perfecto_token, monkeypatch):
+        persisted: dict = {}
+        self._mock_script_io(monkeypatch, persisted)
+
+        async def mutator(current_script: dict) -> None:
+            await asyncio.sleep(0)
+            current_script.setdefault("flowElements", []).append(build_flow_element("wait"))
+
+        result = asyncio.run(load_and_mutate(perfecto_token, "PRIVATE:Folder/Test.xml", mutator))
+
+        assert result.error is None
+        assert persisted["flow_count"] == 1
+
+    def test_async_mutator_validation_error_skips_persist(self, perfecto_token, monkeypatch):
+        persisted: dict = {}
+        self._mock_script_io(monkeypatch, persisted)
+
+        async def mutator(_current_script: dict) -> None:
+            await asyncio.sleep(0)
+            raise ValueError("Unknown cmd_arguments for command 'wait'")
+
+        result = asyncio.run(load_and_mutate(perfecto_token, "PRIVATE:Folder/Test.xml", mutator))
+
+        assert result.error == "Unknown cmd_arguments for command 'wait'"
+        assert persisted == {}
