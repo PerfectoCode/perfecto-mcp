@@ -19,6 +19,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests.conftest import make_ctx
 from update.install import copy_into_place_now, write_and_spawn_installer
 from update.processes import (
     RunningProcess,
@@ -280,7 +281,7 @@ def test_run_interactive_update_spawns_and_returns_without_sys_exit():
 def test_update_status_tool(perfecto_token):
     from tools.tools_manager import ToolsManager
 
-    manager = ToolsManager(perfecto_token, MagicMock())
+    manager = ToolsManager(make_ctx(perfecto_token))
     with patch("tools.tools_manager.find_other_instances", return_value=[]), \
             patch("tools.tools_manager.describe_manual_update_instructions", return_value={
                 "supported": True,

@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
+from tests.conftest import make_ctx
 from tools.tools_manager import (
     ToolsManager,
 )
@@ -25,12 +26,8 @@ from config.platform_names import normalize_arch, normalize_system
 from update.release import match_recommended_asset
 
 
-def _make_ctx():
-    return MagicMock()
-
-
 def test_version_returns_current_build_metadata(perfecto_token):
-    manager = ToolsManager(perfecto_token, _make_ctx())
+    manager = ToolsManager(make_ctx(perfecto_token))
     result = asyncio.run(manager.version())
 
     assert result.error is None
@@ -111,7 +108,7 @@ def test_check_updates_when_latest_is_newer(perfecto_token):
             patch("update.release.platform.system", return_value="Darwin"), \
             patch("update.release.platform.machine", return_value="arm64"), \
             patch("tools.tools_manager._detect_runtime", return_value=runtime):
-        manager = ToolsManager(perfecto_token, _make_ctx())
+        manager = ToolsManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.check_updates())
 
     assert result.error is None
@@ -153,7 +150,7 @@ def test_check_updates_source_runtime_guidance(perfecto_token):
     with patch("tools.tools_manager.httpx.AsyncClient", return_value=mock_client), \
             patch("tools.tools_manager.__version__", "1.0.0"), \
             patch("tools.tools_manager._detect_runtime", return_value=runtime):
-        result = asyncio.run(ToolsManager(perfecto_token, _make_ctx()).check_updates())
+        result = asyncio.run(ToolsManager(make_ctx(perfecto_token)).check_updates())
 
     automatic = result.result[0]["update_guidance"]["automatic"].lower()
     assert "frozen" in automatic or "source" in automatic
@@ -181,7 +178,7 @@ def test_check_updates_when_up_to_date(perfecto_token):
 
     with patch("tools.tools_manager.httpx.AsyncClient", return_value=mock_client), \
             patch("tools.tools_manager.__version__", "1.1.1"):
-        manager = ToolsManager(perfecto_token, _make_ctx())
+        manager = ToolsManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.check_updates())
 
     assert result.error is None
@@ -204,7 +201,7 @@ def test_check_updates_http_error(perfecto_token):
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     with patch("tools.tools_manager.httpx.AsyncClient", return_value=mock_client):
-        manager = ToolsManager(perfecto_token, _make_ctx())
+        manager = ToolsManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.check_updates())
 
     assert result.error is None
@@ -228,7 +225,7 @@ def test_check_updates_connect_error(perfecto_token):
 
     with patch("tools.tools_manager.httpx.AsyncClient", return_value=mock_client), \
             patch("tools.tools_manager.__version__", "1.1.1"):
-        manager = ToolsManager(perfecto_token, _make_ctx())
+        manager = ToolsManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.check_updates())
 
     assert result.error is None
@@ -247,7 +244,7 @@ def test_check_updates_timeout(perfecto_token):
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     with patch("tools.tools_manager.httpx.AsyncClient", return_value=mock_client):
-        manager = ToolsManager(perfecto_token, _make_ctx())
+        manager = ToolsManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.check_updates())
 
     assert result.error is None
