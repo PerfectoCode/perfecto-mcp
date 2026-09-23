@@ -98,6 +98,10 @@ def _hydrate_ctx_user_config(ctx: Any, user_config: dict[str, Any]) -> None:
         return
 
     config_copy = dict(user_config)
+    try:
+        setattr(ctx, "user_config", dict(config_copy))
+    except Exception:
+        pass
     request_context = getattr(ctx, "request_context", None)
     request = getattr(request_context, "request", None)
     request_state = getattr(request, "state", None)
