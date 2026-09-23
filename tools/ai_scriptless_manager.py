@@ -1047,8 +1047,8 @@ Hints:
             arguments: Dict[str, Any] = Field(description="Dictionary with arguments", default=None),
             ctx: Context = Field(description="Context object providing access to MCP capabilities")
     ) -> BaseResult:
-        action, args = normalize_action_args(arguments)
         runtime.configure_context(ctx)
+        action, args = normalize_action_args(arguments)
         ai_scriptless_manager = AiScriptlessManager(ctx)
 
         async def _dispatch():
