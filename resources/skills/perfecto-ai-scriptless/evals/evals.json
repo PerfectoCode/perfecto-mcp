@@ -1,0 +1,40 @@
+{
+  "skill_name": "perfecto-ai-scriptless",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I'm new to Perfecto — how do I open AI Scriptless and create my first test? Our cloud might only have Scriptless Mobile, not the full AI label.",
+      "expected_output": "Explains access path (Scriptless Automation → Build ai scriptless test), lab URL pattern, license labeling (AI Scriptless vs Scriptless Mobile), and a short create/save/run path. Mentions AI license/toggle for AI commands.",
+      "files": [],
+      "expectations": [
+        "Mentions Perfecto landing page or Scriptless Automation access path",
+        "Explains AI Scriptless vs Scriptless Mobile license difference",
+        "Mentions DUT or execute/run step for a first test",
+        "Does not invent a per-test deep link URL"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Using Perfecto MCP, add an AI validation step that checks the login button is green, then run the test on a free real device named something like Galaxy-S23.",
+      "expected_output": "Uses perfecto_ai_scriptless with list_commands / get_command_definitions, prefers ai_validation, phrases a PASS/FAIL validation (not an open question), view_test_structure around edits, validates device availability, then execute_test and monitoring via perfecto_execution/devices.",
+      "files": [],
+      "expectations": [
+        "Calls or describes list_commands before add_command",
+        "Uses or recommends ai_validation (not a vague open question)",
+        "Mentions view_test_structure or ephemeral step_path behavior",
+        "Includes device availability check before execute_test"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Help me phrase an AI user action for checkout: pick VISA and confirm. Also should I fail the visual comparison on Device and Pixel Diff?",
+      "expected_output": "Gives goal-based phrasing (not locator/coordinates), points at user-action best practices, and advises against Device/Pixel Diff as default failure categories for visual comparison.",
+      "files": [],
+      "expectations": [
+        "Phrasing describes logical goal rather than mouse coordinates or brittle labels alone",
+        "Warns against Device and Pixel Diff as default visual-comparison failure categories",
+        "References or applies AI user-action / visual-comparison guidance from the skill"
+      ]
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import pytest
 import main
 from config.auth import HttpAuthProvider, StdioAuthProvider
 from config.runtime import AppRuntime, resolve_http_bind_settings
+from mcp.server.fastmcp.utilities import func_metadata
 
 
 class _DummyFastMCP:
@@ -171,6 +172,22 @@ class TestBuildMcpServerAuthWiring:
             assert runtime.auth.get_token(ctx=None) is perfecto_token
             assert runtime.user_config["token"] is perfecto_token
             assert runtime.user_config["cloud_name"] == "demo"
+
+    def test_argument_model_patch_is_scoped_to_tool_registration(self, monkeypatch):
+        captured = {}
+
+        def capture_register(mcp, runtime):
+            captured["during_register"] = func_metadata.ArgModelBase
+
+        _patch_mcp_server_dependencies(monkeypatch)
+        monkeypatch.setattr(main, "register_tools", capture_register)
+
+        assert func_metadata.ArgModelBase is main._OriginalArgModelBase
+
+        main.build_mcp_server(transport="http")
+
+        assert captured["during_register"] is main._PatchedArgModelBase
+        assert func_metadata.ArgModelBase is main._OriginalArgModelBase
 
 
 class TestRunTransportDispatch:

@@ -517,16 +517,18 @@ def validate_variable_bindings(
     spec = get_command_spec(command_id)
     errors: list[str] = []
     for name, raw in spec.normalize_argument_names(cmd_arguments).items():
-        if not isinstance(raw, dict) or "data_source" not in raw:
-            continue
-        if str(raw.get("data_source") or "").upper() != "VARIABLE":
-            continue
         parameter = contract.parameter(name)
         if parameter is None:
             continue
-        error = _variable_binding_error(name, raw.get("value"), parameter, script)
-        if error:
-            errors.append(error)
+        occurrences = raw if parameter.is_multivalued and isinstance(raw, list) else [raw]
+        for occurrence in occurrences:
+            if not isinstance(occurrence, dict) or "data_source" not in occurrence:
+                continue
+            if str(occurrence.get("data_source") or "").upper() != "VARIABLE":
+                continue
+            error = _variable_binding_error(name, occurrence.get("value"), parameter, script)
+            if error:
+                errors.append(error)
     if not errors:
         return None
     return f"Invalid cmd_arguments for command '{command_id}': " + " ".join(errors)
