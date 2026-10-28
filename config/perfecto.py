@@ -84,6 +84,18 @@ def get_ai_scriptless_draft_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.app.perfectomobile.com/native-automation-webapp/rest/v1/draft-management/draft"
 
 
+def get_ai_scriptless_script_asset_api_url(cloud_name: str) -> str:
+    """
+    Script asset manager: the script tree, the script and its drafts.
+
+    Replaces get_ai_scriptless_api_url for those three. Taken from the Perfecto
+    UI's own traffic, which reads and writes here with the same request bodies
+    the older native-automation-webapp took. It sits on the engine host beside
+    get_ai_scriptless_command_repository_url, not on the app host.
+    """
+    return f"https://{cloud_name}.perfectomobile.com/scriptless-mobile-engine/script-asset-manager/api"
+
+
 def get_ai_scriptless_execution_api_url(cloud_name: str) -> str:
     return f"https://{cloud_name}.perfectomobile.com/scriptless-mobile-engine/script-executor/api/executions"
 

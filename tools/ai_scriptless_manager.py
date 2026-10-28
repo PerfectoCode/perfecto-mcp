@@ -137,8 +137,8 @@ class AiScriptlessManager(Manager):
         page_index = args.get("page_index", 1)
         skip = (page_size * page_index) - page_size
 
-        tree_url = perfecto.get_ai_scriptless_api_url(self.token.cloud_name)
-        tree_url = tree_url + "/scripts/tree"
+        tree_url = perfecto.get_ai_scriptless_script_asset_api_url(self.token.cloud_name)
+        tree_url = tree_url + "/script-directory-repository/tree"
         tests_result = await api_request(self.token, "GET", endpoint=tree_url,
                                          result_formatter=format_ai_scriptless_tests,
                                          result_formatter_params={"page_size": page_size, "skip": skip,
@@ -164,8 +164,8 @@ class AiScriptlessManager(Manager):
 
     @token_verify
     async def list_filter_values(self, filter_names: list[str]) -> BaseResult:
-        tree_url = perfecto.get_ai_scriptless_api_url(self.token.cloud_name)
-        tree_url = tree_url + "/scripts/tree"
+        tree_url = perfecto.get_ai_scriptless_script_asset_api_url(self.token.cloud_name)
+        tree_url = tree_url + "/script-directory-repository/tree"
         filter_values_result = await api_request(self.token, "GET", endpoint=tree_url,
                                                  result_formatter=format_ai_scriptless_tests_filter_values)
         filter_values = {}
@@ -451,8 +451,8 @@ class AiScriptlessManager(Manager):
     async def view_test_structure(self, test_id: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
-        script_url = perfecto.get_ai_scriptless_api_url(self.token.cloud_name)
-        script_url = script_url + f"/script?itemKey={quote(test_id, safe='')}"
+        script_url = perfecto.get_ai_scriptless_script_asset_api_url(self.token.cloud_name)
+        script_url = script_url + f"/script-repository/script?itemKey={quote(test_id, safe='')}"
         result = await api_request(self.token, "GET", endpoint=script_url,
                                  result_formatter=format_test_structure,
                                  result_formatter_params={"item_key": test_id})
@@ -806,7 +806,10 @@ class AiScriptlessManager(Manager):
     async def delete_test(self, test_id: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
-        delete_url = perfecto.get_ai_scriptless_api_url(self.token.cloud_name) + "/repositories"
+        # The asset manager deletes through the script resource itself; the
+        # older native-automation-webapp had a separate /repositories path.
+        delete_url = perfecto.get_ai_scriptless_script_asset_api_url(self.token.cloud_name) \
+            + "/script-repository/script"
         return await api_request(
             self.token,
             "DELETE",

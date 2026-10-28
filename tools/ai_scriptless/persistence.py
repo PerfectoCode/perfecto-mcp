@@ -16,8 +16,8 @@ from tools.utils import api_request
 
 
 async def fetch_script_payload(token: PerfectoToken, test_id: str) -> BaseResult:
-    script_url = perfecto.get_ai_scriptless_api_url(token.cloud_name)
-    script_url = script_url + f"/script?itemKey={quote(test_id, safe='')}"
+    script_url = perfecto.get_ai_scriptless_script_asset_api_url(token.cloud_name)
+    script_url = script_url + f"/script-repository/script?itemKey={quote(test_id, safe='')}"
     return await api_request(token, "GET", endpoint=script_url)
 
 
@@ -55,7 +55,8 @@ async def _persist_script(
     strip_non_api_script_fields(baseline_script)
     update_flow_element_counts(working_script)
 
-    draft_url = perfecto.get_ai_scriptless_draft_api_url(token.cloud_name)
+    draft_url = perfecto.get_ai_scriptless_script_asset_api_url(token.cloud_name)
+    draft_url = draft_url + "/script-draft-repository/draft"
     draft_data = json.dumps({
         "unsavedScript": working_script,
         "savedScript": baseline_script,
@@ -76,7 +77,8 @@ async def _persist_script(
     if not draft_key:
         return BaseResult(error="Draft creation failed: missing draft key in response")
 
-    script_url = perfecto.get_ai_scriptless_api_url(token.cloud_name) + "/script"
+    script_url = perfecto.get_ai_scriptless_script_asset_api_url(token.cloud_name) \
+        + "/script-repository/script"
     save_body: dict[str, Any] = {
         "script": working_script,
         "itemKey": item_key,

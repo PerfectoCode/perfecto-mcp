@@ -658,8 +658,8 @@ class TestListAndReadOperations:
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
         monkeypatch.setattr(
             ai_scriptless_manager.perfecto,
-            "get_ai_scriptless_api_url",
-            lambda _cloud: "https://demo.app.perfectomobile.com/perfectomobile/ai-scriptless/api",
+            "get_ai_scriptless_script_asset_api_url",
+            lambda _cloud: "https://demo.perfectomobile.com/scriptless-mobile-engine/script-asset-manager/api",
         )
 
         manager = AiScriptlessManager(make_ctx(perfecto_token))
@@ -669,7 +669,7 @@ class TestListAndReadOperations:
         assert result.result.count == 1
         assert "PRIVATE:My Folder/Login.xml" in result.result.items[0]
         assert result.info is not None
-        assert captured["endpoint"].endswith("/scripts/tree")
+        assert captured["endpoint"].endswith("/script-directory-repository/tree")
 
     def test_list_tests_propagates_api_error(self, perfecto_token, monkeypatch):
         async def fake_api_request(*_args, **_kwargs):
