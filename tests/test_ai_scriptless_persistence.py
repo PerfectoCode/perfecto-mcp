@@ -31,7 +31,7 @@ class TestPersistScript:
 
         async def fake_api_request(_token, method, endpoint=None, **kwargs):
             calls.append({"method": method, "endpoint": endpoint, "json": kwargs.get("json")})
-            if endpoint and "draft-management" in endpoint:
+            if endpoint and "script-draft-repository" in endpoint:
                 return BaseResult(result={"key": "draft-abc"})
             return BaseResult(result={"status": "saved"})
 
@@ -48,9 +48,9 @@ class TestPersistScript:
         assert result.result["flow_element_count"] == 1
         assert len(calls) == 2
         assert calls[0]["method"] == "POST"
-        assert "draft-management" in calls[0]["endpoint"]
+        assert calls[0]["endpoint"].endswith("/script-draft-repository/draft")
         assert calls[1]["method"] == "POST"
-        assert calls[1]["endpoint"].endswith("/script")
+        assert calls[1]["endpoint"].endswith("/script-repository/script")
         assert calls[1]["json"]["draftKey"] == "draft-abc"
         assert calls[1]["json"]["itemKey"] == "PRIVATE:Folder/Test.xml"
 
@@ -58,7 +58,7 @@ class TestPersistScript:
         captured_draft: dict = {}
 
         async def fake_api_request(_token, method, endpoint=None, **kwargs):
-            if endpoint and "draft-management" in endpoint:
+            if endpoint and "script-draft-repository" in endpoint:
                 captured_draft["data"] = json.loads(kwargs["json"]["data"])
                 return BaseResult(result={"key": "draft-abc"})
             return BaseResult(result={"status": "saved"})
@@ -77,7 +77,7 @@ class TestPersistScript:
 
     def test_persist_accepts_script_aggregate(self, perfecto_token, monkeypatch):
         async def fake_api_request(_token, method, endpoint=None, **kwargs):
-            if endpoint and "draft-management" in endpoint:
+            if endpoint and "script-draft-repository" in endpoint:
                 return BaseResult(result={"key": "draft-abc"})
             return BaseResult(result={"status": "saved"})
 
@@ -96,7 +96,7 @@ class TestPersistScript:
         save_payload: dict = {}
 
         async def fake_api_request(_token, method, endpoint=None, **kwargs):
-            if endpoint and "draft-management" in endpoint:
+            if endpoint and "script-draft-repository" in endpoint:
                 return BaseResult(result={"key": "draft-abc"})
             save_payload["json"] = kwargs.get("json")
             return BaseResult(result={"status": "saved"})

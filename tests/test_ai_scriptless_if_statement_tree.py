@@ -261,7 +261,7 @@ class TestIfStatementPersistPreparation:
         captured: dict = {}
 
         async def fake_api_request(_token, method, endpoint=None, **kwargs):
-            if endpoint and "draft-management" in endpoint:
+            if endpoint and "script-draft-repository" in endpoint:
                 return BaseResult(result={"key": "d1"})
             captured["save_script"] = kwargs["json"]["script"]
             return BaseResult(result={"status": "success"})
@@ -286,7 +286,7 @@ class TestIfStatementPersistPreparation:
         captured: dict = {}
 
         async def fake_api_request(_token, method, endpoint=None, **kwargs):
-            if endpoint and "draft-management" in endpoint:
+            if endpoint and "script-draft-repository" in endpoint:
                 return BaseResult(result={"key": "d1"})
             captured["save_script"] = kwargs["json"]["script"]
             return BaseResult(result={"status": "success"})
