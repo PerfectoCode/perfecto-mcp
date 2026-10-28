@@ -34,21 +34,33 @@ _script_write_locks: dict[tuple[str, str, str], _ScriptLock] = {}
 _script_write_locks_guard = asyncio.Lock()
 
 
-def _script_lock_key(token: PerfectoToken, item_key: str) -> tuple[str, str, str]:
-    # A PRIVATE item key names a different script for every user, and one key can
-    # exist on several clouds. The token is hashed so it is not kept as a key.
-    user = hashlib.sha256(token.token.encode("utf-8")).hexdigest()
-    return str(token.cloud_name), user, item_key
+async def script_lock_owner(token: PerfectoToken) -> BaseResult:
+    """The user a script lock belongs to, read from Perfecto for each write and not kept.
+
+    A PRIVATE item key names a different script for every user, so the lock is per
+    user. The user comes from the service rather than the token, so no token is held
+    in the lock table; the username is hashed so a dump of it shows no account either.
+    """
+    user_url = perfecto.get_user_management_api_url(token.cloud_name) + "/current"
+    result = await api_request(token, "GET", endpoint=user_url)
+    if result.error:
+        return result
+    username = result.result.get("username") if isinstance(result.result, dict) else None
+    if not username:
+        return BaseResult(error="Could not read the current Perfecto user, so the test was not changed.")
+    return BaseResult(result=hashlib.sha256(username.encode("utf-8")).hexdigest())
 
 
 @asynccontextmanager
-async def script_write_lock(token: PerfectoToken, item_key: str):
+async def script_write_lock(cloud_name: str, owner: str, item_key: str):
     """Serialize writes to one user's script in this process; the entry lives only while in use.
 
-    With several server instances this does not coordinate between them; a shared
-    lock service would take its place behind this same call.
+    ``owner`` comes from script_lock_owner. One item key can exist on several clouds,
+    so the cloud is part of the key. With several server instances this does not
+    coordinate between them; a shared lock service would take its place behind this
+    same call.
     """
-    key = _script_lock_key(token, item_key)
+    key = (str(cloud_name), owner, item_key)
     async with _script_write_locks_guard:
         held = _script_write_locks.setdefault(key, _ScriptLock())
         held.users += 1
@@ -311,7 +323,10 @@ async def persist_script(
         saved_script: Optional[ScriptInput] = None,
         snapshot_comment: Optional[str] = None,
 ) -> BaseResult:
-    async with script_write_lock(token, item_key):
+    owner = await script_lock_owner(token)
+    if owner.error:
+        return owner
+    async with script_write_lock(token.cloud_name, owner.result, item_key):
         return await _persist_script(
             token,
             item_key,
@@ -327,7 +342,10 @@ async def load_and_mutate(
         mutator,
         snapshot_comment: Optional[str] = None,
 ) -> BaseResult:
-    async with script_write_lock(token, test_id):
+    owner = await script_lock_owner(token)
+    if owner.error:
+        return owner
+    async with script_write_lock(token.cloud_name, owner.result, test_id):
         payload_result = await fetch_script_payload(token, test_id)
         if payload_result.error:
             return payload_result

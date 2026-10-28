@@ -50,6 +50,7 @@ from tools.ai_scriptless_script import (
     new_empty_script,
     normalize_if_statement_aliases,
     persist_script,
+    script_lock_owner,
     script_write_lock,
     find_condition_statement,
     set_element_error_policy,
@@ -638,7 +639,10 @@ class AiScriptlessManager(Manager):
             return BaseResult(error="test_id is required")
         if not name:
             return BaseResult(error="name is required")
-        async with script_write_lock(self.token, test_id):
+        owner = await script_lock_owner(self.token)
+        if owner.error:
+            return owner
+        async with script_write_lock(self.token.cloud_name, owner.result, test_id):
             payload_result = await fetch_script_payload(self.token, test_id)
             if payload_result.error:
                 return payload_result

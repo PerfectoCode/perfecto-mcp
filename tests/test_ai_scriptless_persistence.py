@@ -16,6 +16,7 @@ limitations under the License.
 
 import asyncio
 import copy
+import hashlib
 import json
 
 from models.result import BaseResult
@@ -25,6 +26,9 @@ from tools.ai_scriptless.elements import build_branch, build_flow_element, build
 from tools.ai_scriptless.persistence import load_and_mutate, persist_script
 from tools.ai_scriptless.tree import insert_flow_element
 from tools.ai_scriptless.script import Script
+
+# The real lookup, kept before the autouse offline_lock_owner fixture replaces it.
+REAL_LOCK_OWNER = persistence.script_lock_owner
 
 
 class TestPersistScript:
@@ -505,25 +509,25 @@ class TestReadBackAfterSave:
 class TestScriptWriteLock:
     """One lock per user, cloud and script, kept only while someone holds or waits for it."""
 
-    ALICE = PerfectoToken("alice-token", "cloud-one")
-    BOB = PerfectoToken("bob-token", "cloud-one")
-    ALICE_ELSEWHERE = PerfectoToken("alice-token", "cloud-two")
+    ALICE = ("cloud-one", "alice-owner")
+    BOB = ("cloud-one", "bob-owner")
+    ALICE_ELSEWHERE = ("cloud-two", "alice-owner")
 
     @staticmethod
-    async def _second_waits(first: PerfectoToken, second: PerfectoToken) -> bool:
+    async def _second_waits(first: tuple, second: tuple) -> bool:
         holding, release = asyncio.Event(), asyncio.Event()
 
         async def hold():
-            async with persistence.script_write_lock(first, ITEM):
+            async with persistence.script_write_lock(*first, ITEM):
                 holding.set()
                 await release.wait()
 
         async def enter_and_leave():
-            async with persistence.script_write_lock(second, ITEM):
+            async with persistence.script_write_lock(*second, ITEM):
                 pass
 
         holder = asyncio.create_task(hold())
-        await holding.wait()
+        await asyncio.wait_for(holding.wait(), timeout=1.0)
         try:
             await asyncio.wait_for(enter_and_leave(), timeout=0.2)
             waited = False
@@ -547,7 +551,7 @@ class TestScriptWriteLock:
 
     def test_entry_is_removed_after_release_even_on_error(self):
         async def fail_inside():
-            async with persistence.script_write_lock(self.ALICE, ITEM):
+            async with persistence.script_write_lock(*self.ALICE, ITEM):
                 raise ValueError("boom")
 
         try:
@@ -557,12 +561,82 @@ class TestScriptWriteLock:
 
         assert persistence._script_write_locks == {}
 
-    def test_token_is_not_kept_in_the_key(self):
-        async def look_inside():
-            async with persistence.script_write_lock(self.ALICE, ITEM):
-                return list(persistence._script_write_locks)
 
-        keys = asyncio.run(look_inside())
+class TestScriptLockOwner:
+    """The lock belongs to the user Perfecto reports for the token, never to the token."""
 
-        assert len(keys) == 1
-        assert "alice-token" not in repr(keys)
+    TOKEN = PerfectoToken("synthetic-token-value", "cloud-one")
+    USERNAME = "alice@example.test"
+
+    def _users(self, monkeypatch, answer: BaseResult) -> list:
+        calls = []
+
+        async def fake_api_request(_token, method, endpoint=None, **_kwargs):
+            calls.append((method, endpoint))
+            return answer
+
+        monkeypatch.setattr(persistence, "api_request", fake_api_request)
+        return calls
+
+    def test_owner_is_the_hashed_username_from_the_current_user(self, monkeypatch):
+        calls = self._users(monkeypatch, BaseResult(result={"username": self.USERNAME}))
+
+        owner = asyncio.run(REAL_LOCK_OWNER(self.TOKEN))
+
+        assert owner.error is None
+        assert owner.result == hashlib.sha256(self.USERNAME.encode("utf-8")).hexdigest()
+        assert calls == [("GET", "https://cloud-one.app.perfectomobile.com"
+                                 "/user-management-webapp/rest/v1/user-management/current")]
+
+    def test_same_user_with_another_token_gets_the_same_owner(self, monkeypatch):
+        self._users(monkeypatch, BaseResult(result={"username": self.USERNAME}))
+
+        first = asyncio.run(REAL_LOCK_OWNER(self.TOKEN))
+        second = asyncio.run(REAL_LOCK_OWNER(PerfectoToken("another-token-value", "cloud-one")))
+
+        assert first.result == second.result
+
+    def test_lookup_error_is_returned(self, monkeypatch):
+        self._users(monkeypatch, BaseResult(error="Invalid credentials"))
+
+        assert asyncio.run(REAL_LOCK_OWNER(self.TOKEN)).error == "Invalid credentials"
+
+    def test_answer_without_username_is_an_error(self, monkeypatch):
+        self._users(monkeypatch, BaseResult(result={"firstName": "Alice"}))
+
+        assert "Could not read the current Perfecto user" in asyncio.run(REAL_LOCK_OWNER(self.TOKEN)).error
+
+    def test_write_is_not_made_when_the_owner_is_unknown(self, monkeypatch):
+        async def no_owner(_token):
+            return BaseResult(error="Invalid credentials")
+
+        calls = self._users(monkeypatch, BaseResult(result={"script": new_empty_script()}))
+        monkeypatch.setattr(persistence, "script_lock_owner", no_owner)
+
+        saved = asyncio.run(persist_script(self.TOKEN, ITEM, new_empty_script()))
+        changed = asyncio.run(load_and_mutate(self.TOKEN, ITEM, _adding("first")))
+
+        assert saved.error == changed.error == "Invalid credentials"
+        assert calls == []
+
+    def test_lock_table_holds_neither_token_nor_username_during_a_write(self, monkeypatch):
+        seen = []
+
+        async def fake_api_request(_token, method, endpoint=None, **_kwargs):
+            if "user-management" in endpoint:
+                return BaseResult(result={"username": self.USERNAME})
+            seen.append(repr(persistence._script_write_locks))
+            if method == "GET":
+                return BaseResult(result={"script": new_empty_script()})
+            if "script-draft-repository" in endpoint:
+                return BaseResult(result={"key": "draft-1"})
+            return BaseResult(result={"status": "success"})
+
+        monkeypatch.setattr(persistence, "api_request", fake_api_request)
+        monkeypatch.setattr(persistence, "script_lock_owner", REAL_LOCK_OWNER)
+
+        asyncio.run(load_and_mutate(self.TOKEN, ITEM, _adding("first")))
+
+        assert seen and all(ITEM in table for table in seen)
+        assert not any(self.TOKEN.token in table or self.USERNAME in table for table in seen)
+        assert persistence._script_write_locks == {}

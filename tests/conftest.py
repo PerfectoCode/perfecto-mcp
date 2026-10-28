@@ -59,6 +59,22 @@ def quick_save_read_back(monkeypatch):
     monkeypatch.setattr(persistence, "CONFIRM_EVERY_SECONDS", 0.0)
 
 
+@pytest.fixture(autouse=True)
+def offline_lock_owner(monkeypatch):
+    """Answer the current-user lookup that every script write makes for its lock.
+
+    The fakes in the suite serve scripts, not users. Tests of the lookup itself
+    call the real one, kept as persistence.script_lock_owner before this runs.
+    """
+    from tools import ai_scriptless_manager
+
+    async def owner(_token):
+        return BaseResult(result="test-user")
+
+    monkeypatch.setattr(persistence, "script_lock_owner", owner)
+    monkeypatch.setattr(ai_scriptless_manager, "script_lock_owner", owner)
+
+
 @pytest.fixture
 def declare_commands(monkeypatch, offline_command_definitions):
     """Declare contracts per command_id.
