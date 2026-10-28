@@ -34,6 +34,7 @@ from tools.ai_scriptless.definitions import (
     CommandContract,
     command_contract,
     empty_mandatory_note,
+    handset_constant_note,
     validate_argument_names,
 )
 
@@ -86,6 +87,43 @@ class TestValidateArgumentNames:
             "ai_user-action",
             {"action": {"data_source": "VARIABLE", "value": "loginStep"}},
             USER_ACTION,
+        ) is None
+
+
+class TestHandsetConstantNote:
+    HANDSET_COMMAND = CommandContract(
+        "handset_ready",
+        mandatory=frozenset({"handsetId"}),
+        parameters={"handsetId": ParameterContract(
+            name="handsetId", data_type="HANDSET", mandatory=True,
+            data_sources=("CONSTANT", "VARIABLE", "DATATABLE"))},
+        element_type="Action",
+    )
+
+    def test_notes_a_device_pinned_to_a_literal_id(self):
+        note = handset_constant_note(
+            "handset_ready",
+            {"handsetId": {"data_source": "CONSTANT", "value": "DEVICE-123"}},
+            self.HANDSET_COMMAND,
+        )
+        assert "handsetId" in note
+        assert "No handset is available" in note
+
+    def test_no_note_when_bound_to_a_device_variable(self):
+        assert handset_constant_note(
+            "handset_ready",
+            {"handsetId": {"data_source": "VARIABLE", "value": "android"}},
+            self.HANDSET_COMMAND,
+        ) is None
+
+    def test_no_note_for_a_constant_on_another_parameter_type(self):
+        contract = CommandContract(
+            "type",
+            parameters={"text": ParameterContract(name="text", data_type="STRING")},
+            element_type="Action",
+        )
+        assert handset_constant_note(
+            "type", {"text": {"data_source": "CONSTANT", "value": "hello"}}, contract
         ) is None
 
 

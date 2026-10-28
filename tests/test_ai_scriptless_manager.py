@@ -114,7 +114,245 @@ def _assert_step_path_notes(result: BaseResult) -> None:
         assert note in result.result["notes"]
 
 
+def script_with_device(name, value, referenced=True):
+    """A script declaring one device parameter, optionally used by a step."""
+    script = new_empty_script()
+    script["parameters"].append({
+        "@type": "Parameter",
+        "data": {
+            "@type": "HandsetData",
+            "key": "IMEI" if value else None,
+            "value": value,
+            "secured": False,
+            "description": None,
+            "displayName": None,
+            "name": name,
+        },
+    })
+    if referenced:
+        script["flowElements"].append({
+            "@type": "Action",
+            "command": "handset",
+            "subcommand": "ready",
+            "arguments": [{
+                "@type": "FunctionArgument",
+                "name": "handsetId",
+                "data": {"@type": "VariableArgumentData", "dataSource": "VARIABLE", "value": name},
+            }],
+        })
+    return script
+
+
+class TestExecuteTestDevicePreflight:
+    """A device that cannot be reserved answers 'No handset is available', which names
+    neither the parameter nor the device. The preflight says both before the run starts."""
+
+    INVENTORY = {
+        "DEVICE-OK": {"deviceId": "DEVICE-OK", "available": "true", "inUse": "false",
+                      "status": "Connected"},
+        "DEVICE-BUSY": {"deviceId": "DEVICE-BUSY", "available": "true", "inUse": "true",
+                        "status": "Connected"},
+        "DEVICE-OFFLINE": {"deviceId": "DEVICE-OFFLINE", "available": "false", "inUse": None,
+                           "status": "Not Connected"},
+    }
+
+    @pytest.fixture
+    def cloud(self, monkeypatch):
+        state = {"script": new_empty_script(), "inventory": dict(self.INVENTORY), "launched": False}
+
+        async def fake_fetch_script_payload(_token, _test_id):
+            return BaseResult(result={"script": state["script"]})
+
+        async def fake_inventory(_self):
+            return state["inventory"]
+
+        async def fake_api_request(_token, method, endpoint=None, **kwargs):
+            state["launched"] = True
+            return BaseResult(result={"executionId": "exec-1"})
+
+        monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch_script_payload)
+        monkeypatch.setattr(AiScriptlessManager, "_real_device_inventory", fake_inventory)
+        monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
+        return state
+
+    def run(self, perfecto_token, devices=None, dut="DEVICE-OK"):
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+        entries = {"DUT": {"device_id": dut}} if dut else {}
+        entries.update(devices or {})
+        return asyncio.run(manager.execute_test("PRIVATE:Folder/Test.xml", entries))
+
+    def test_names_the_parameter_left_without_a_device(self, perfecto_token, cloud):
+        cloud["script"] = script_with_device("android", None)
+        result = self.run(perfecto_token)
+
+        assert "android" in result.error
+        assert "No handset is available" in result.error
+        assert cloud["launched"] is False
+
+    def test_ignores_an_empty_declaration_no_step_uses(self, perfecto_token, cloud):
+        # Empty and unused reserves nothing, so it cannot fail the run.
+        cloud["script"] = script_with_device("android", None, referenced=False)
+        result = self.run(perfecto_token)
+
+        assert result.error is None
+        assert cloud["launched"] is True
+
+    def test_checks_a_device_held_by_a_declaration_no_step_uses(self, perfecto_token, cloud):
+        # A device parameter holding a device is reserved whether or not a step names it,
+        # so a device retired since it was configured fails the run from an unused variable.
+        cloud["script"] = script_with_device("leftover", "DEVICE-GONE", referenced=False)
+        result = self.run(perfecto_token)
+
+        assert "leftover" in result.error
+        assert cloud["launched"] is False
+
+    def test_names_a_device_the_cloud_no_longer_lists(self, perfecto_token, cloud):
+        # The device was configured once and the administrators retired it since.
+        cloud["script"] = script_with_device("android", "DEVICE-GONE")
+        result = self.run(perfecto_token)
+
+        assert "android" in result.error
+        assert "DEVICE-GONE" in result.error
+        assert "may have been retired" in result.error
+        assert cloud["launched"] is False
+
+    def test_names_a_device_that_is_disconnected(self, perfecto_token, cloud):
+        cloud["script"] = script_with_device("android", "DEVICE-OFFLINE")
+        result = self.run(perfecto_token)
+
+        assert "Not Connected" in result.error
+        assert cloud["launched"] is False
+
+    def test_checks_the_device_the_caller_passes_too(self, perfecto_token, cloud):
+        result = self.run(perfecto_token, dut="DEVICE-GONE")
+
+        assert "device parameter 'DUT'" in result.error
+        assert "DEVICE-GONE" in result.error
+        assert cloud["launched"] is False
+
+    def test_a_device_passed_in_devices_replaces_the_stored_one(self, perfecto_token, cloud):
+        cloud["script"] = script_with_device("android", "DEVICE-GONE")
+        result = self.run(perfecto_token, devices={"android": {"device_id": "DEVICE-OK"}})
+
+        assert result.error is None
+        assert cloud["launched"] is True
+
+    def test_without_an_override_it_runs_on_the_stored_device(self, perfecto_token, cloud):
+        cloud["script"] = script_with_device("android", "DEVICE-OK")
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+        result = asyncio.run(manager.execute_test("PRIVATE:Folder/Test.xml"))
+
+        assert result.error is None
+        assert cloud["launched"] is True
+        assert any("android=DEVICE-OK (stored in the test)" in note for note in result.info)
+
+    def test_an_override_is_reported_as_coming_from_the_call(self, perfecto_token, cloud):
+        cloud["script"] = script_with_device("android", "DEVICE-OFFLINE")
+        result = self.run(perfecto_token, devices={"android": {"device_id": "DEVICE-OK"}})
+
+        assert result.error is None
+        assert any("android=DEVICE-OK (passed in this call)" in note for note in result.info)
+
+    def test_a_dut_left_empty_asks_for_its_entry(self, perfecto_token, cloud):
+        script = new_empty_script()
+        script["flowElements"].append({
+            "@type": "Action",
+            "command": "handset",
+            "subcommand": "ready",
+            "arguments": [{
+                "@type": "FunctionArgument",
+                "name": "handsetId",
+                "data": {"@type": "VariableArgumentData", "dataSource": "VARIABLE", "value": "DUT"},
+            }],
+        })
+        cloud["script"] = script
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+        result = asyncio.run(manager.execute_test("PRIVATE:Folder/Test.xml"))
+
+        assert "DUT holds no device and devices_under_test has no entry for it" in result.error
+        assert cloud["launched"] is False
+
+    def test_sees_a_device_used_only_inside_a_condition(self, perfecto_token, cloud):
+        # Perfecto can answer with branches[] empty and the children under thenClause.
+        script = new_empty_script()
+        script["parameters"].append({
+            "@type": "Parameter",
+            "data": {"@type": "HandsetData", "key": None, "value": None, "secured": False,
+                     "description": None, "displayName": None, "name": "inner"},
+        })
+        step = {
+            "@type": "Action",
+            "command": "handset",
+            "subcommand": "ready",
+            "arguments": [{
+                "@type": "FunctionArgument",
+                "name": "handsetId",
+                "data": {"@type": "VariableArgumentData", "dataSource": "VARIABLE", "value": "inner"},
+            }],
+        }
+        script["flowElements"].append({
+            "@type": "IfStatement",
+            "branches": [{"@type": "Branch", "flowElements": []},
+                         {"@type": "Branch", "flowElements": []}],
+            "thenClause": {"@type": "Branch", "flowElements": [step]},
+            "elseClause": {"@type": "Branch", "flowElements": []},
+        })
+        cloud["script"] = script
+        result = self.run(perfecto_token)
+
+        assert "inner" in result.error
+        assert cloud["launched"] is False
+
+    def test_a_busy_device_warns_and_still_runs(self, perfecto_token, cloud):
+        cloud["script"] = script_with_device("android", "DEVICE-BUSY")
+        result = self.run(perfecto_token)
+
+        assert result.error is None
+        assert any("in use right now" in w.lower() for w in result.warning)
+        assert cloud["launched"] is True
+
+    def test_capabilities_values_are_left_alone(self, perfecto_token, cloud):
+        # A virtual or desktop device is stored as capabilities, not as a handset id.
+        cloud["script"] = script_with_device("web", '{"platformName":"Windows"}')
+        result = self.run(perfecto_token)
+
+        assert result.error is None
+        assert cloud["launched"] is True
+
+    def test_an_unreadable_inventory_lets_the_run_start(self, perfecto_token, cloud):
+        cloud["script"] = script_with_device("android", "DEVICE-GONE")
+        cloud["inventory"] = None
+        result = self.run(perfecto_token)
+
+        assert result.error is None
+        assert cloud["launched"] is True
+
+
 class TestExecuteTestDeviceMapping:
+    @pytest.fixture(autouse=True)
+    def preflight_finds_nothing_to_check(self, monkeypatch):
+        """These tests are about the params the call builds, not about the preflight.
+
+        The script declares every parameter these tests name, and the device inventory reads
+        as unavailable, which is the preflight's "cannot establish anything" path.
+        """
+        script = new_empty_script()
+        for name in ("android", "ios", "web"):
+            script["parameters"].append({
+                "@type": "Parameter",
+                "data": {"@type": "HandsetData", "key": None, "value": None, "secured": False,
+                         "description": None, "displayName": None, "name": name},
+            })
+
+        async def fake_fetch_script_payload(_token, _test_id):
+            return BaseResult(result={"script": script})
+
+        async def no_inventory(_self):
+            return None
+
+        monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch_script_payload)
+        monkeypatch.setattr(AiScriptlessManager, "_real_device_inventory", no_inventory)
+
     def test_real_device_accepts_snake_case_device_id(self, perfecto_token, monkeypatch):
         captured: dict = {}
 
@@ -127,8 +365,7 @@ class TestExecuteTestDeviceMapping:
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
-            "real",
-            {"device_id": "DEVICE-123"},
+            {"DUT": {"device_id": "DEVICE-123"}},
         ))
 
         assert result.error is None
@@ -147,21 +384,149 @@ class TestExecuteTestDeviceMapping:
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
-            "real",
-            {"deviceId": "DEVICE-456"},
+            {"DUT": {"deviceId": "DEVICE-456"}},
         ))
 
         assert result.error is None
         assert captured["json"]["params"]["DUT"] == "DEVICE-456"
 
-    def test_real_device_requires_device_id(self, perfecto_token):
+    def test_every_entry_becomes_its_own_param(self, perfecto_token, monkeypatch):
+        captured: dict = {}
+
+        async def fake_api_request(_token, method, endpoint=None, **kwargs):
+            captured["json"] = kwargs.get("json")
+            return BaseResult(result={"executionId": "exec-1"})
+
+        monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
+
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
-            "real",
-            {},
+            {
+                "DUT": {"device_id": "DEVICE-DUT"},
+                "android": {"device_id": "DEVICE-A"},
+                "ios": {"device_id": "DEVICE-B"},
+            },
+        ))
+
+        assert result.error is None
+        # DUT is one parameter name among the others, not a separate kind of argument.
+        assert captured["json"]["params"] == {
+            "DUT": "DEVICE-DUT",
+            "android": "DEVICE-A",
+            "ios": "DEVICE-B",
+        }
+
+    def test_entries_may_mix_device_types(self, perfecto_token, monkeypatch):
+        captured: dict = {}
+
+        async def fake_api_request(_token, method, endpoint=None, **kwargs):
+            captured["json"] = kwargs.get("json")
+            return BaseResult(result={"executionId": "exec-1"})
+
+        monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
+
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+        result = asyncio.run(manager.execute_test(
+            "PRIVATE:Folder/Test.xml",
+            {
+                "DUT": {"device_id": "DEVICE-DUT"},
+                "web": {
+                    "device_type": "desktop",
+                    "platform_name": "Windows",
+                    "platform_version": "11",
+                    "browser_name": "Chrome",
+                    "browser_version": "143",
+                    "resolution": "1280x1024",
+                    "location": "US East",
+                },
+            },
+        ))
+
+        assert result.error is None
+        assert captured["json"]["params"]["DUT"] == "DEVICE-DUT"
+        assert json.loads(captured["json"]["params"]["web"])["browserName"] == "Chrome"
+
+    def test_the_retired_arguments_are_answered_by_name(self, perfecto_token, monkeypatch):
+        # device_type/device_under_test/devices were one concept split in three. An agent working
+        # from an older description deserves the new shape, not a run on the wrong devices.
+        tool = _register_tool(perfecto_token)
+        result = asyncio.run(_call_tool(tool, "execute_test", {
+            "test_id": "PRIVATE:Folder/Test.xml",
+            "device_type": "real",
+            "device_under_test": {"device_id": "DEVICE-123"},
+        }))
+
+        assert "device_type, device_under_test" in result.error
+        assert "devices_under_test maps a device parameter name" in result.error
+
+    def test_an_entry_the_test_does_not_declare_is_refused(self, perfecto_token, monkeypatch):
+        captured: dict = {}
+
+        async def fake_api_request(_token, method, endpoint=None, **kwargs):
+            captured["json"] = kwargs.get("json")
+            return BaseResult(result={"executionId": "exec-1"})
+
+        monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
+
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+        result = asyncio.run(manager.execute_test(
+            "PRIVATE:Folder/Test.xml",
+            {"DUT": {"device_id": "DEVICE-DUT"}, "andriod": {"device_id": "DEVICE-A"}},
+        ))
+
+        # Perfecto drops an unknown params entry silently and runs on the stored device, so a
+        # misspelled name would otherwise come back as a green run on the wrong phone.
+        assert "'andriod'" in result.error
+        assert "android" in result.error
+        assert "json" not in captured
+
+    def test_reports_the_entry_that_is_missing_its_device_id(self, perfecto_token):
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+        result = asyncio.run(manager.execute_test(
+            "PRIVATE:Folder/Test.xml",
+            {"DUT": {"device_id": "DEVICE-DUT"}, "android": {}},
+        ))
+
+        assert "devices_under_test['android']" in result.error
+
+    def test_reports_an_entry_it_cannot_read(self, perfecto_token):
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+        result = asyncio.run(manager.execute_test(
+            "PRIVATE:Folder/Test.xml",
+            {"DUT": {"model": "Galaxy S10"}},
         ))
         assert "device_id could not be found" in result.error
+
+    def test_an_entry_that_is_not_an_object_is_reported(self, perfecto_token):
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+        result = asyncio.run(manager.execute_test(
+            "PRIVATE:Folder/Test.xml",
+            {"DUT": "DEVICE-123"},
+        ))
+        assert "devices_under_test maps a device parameter name" in result.error
+
+    def test_a_devices_under_test_that_is_not_a_map_is_reported(self, perfecto_token):
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+        result = asyncio.run(manager.execute_test("PRIVATE:Folder/Test.xml", "DEVICE-123"))
+        assert "Invalid devices_under_test" in result.error
+
+    def test_no_devices_under_test_sends_no_params(self, perfecto_token, monkeypatch):
+        captured: dict = {}
+
+        async def fake_api_request(_token, method, endpoint=None, **kwargs):
+            captured["json"] = kwargs.get("json")
+            return BaseResult(result={"executionId": "exec-stored"})
+
+        monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
+
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+        result = asyncio.run(manager.execute_test("PRIVATE:Folder/Test.xml"))
+
+        # Perfecto only overrides a device parameter that the run supplies, so empty params
+        # is what "run on the devices the test stores" looks like on the wire.
+        assert result.error is None
+        assert captured["json"]["params"] == {}
 
     def test_virtual_device_serializes_capabilities_json(self, perfecto_token, monkeypatch):
         captured: dict = {}
@@ -175,13 +540,13 @@ class TestExecuteTestDeviceMapping:
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
-            "virtual",
-            {
+            {"DUT": {
+                "device_type": "virtual",
                 "platform_name": "Android",
                 "manufacturer": "Google",
                 "model": "Pixel 8",
                 "platform_version": "14",
-            },
+            }},
         ))
 
         assert result.error is None
@@ -201,8 +566,7 @@ class TestExecuteTestDeviceMapping:
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
-            "virtual",
-            {"platform_name": "Android"},
+            {"DUT": {"device_type": "virtual", "platform_name": "Android"}},
         ))
 
         assert result.error is None
@@ -215,10 +579,10 @@ class TestExecuteTestDeviceMapping:
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             "PRIVATE:Folder/Test.xml",
-            "unknown",
-            {"device_id": "x"},
+            {"DUT": {"device_type": "unknown", "device_id": "x"}},
         ))
-        assert result.error == "Invalid device_type or device_under_test value."
+        assert "Invalid device_type 'unknown' for devices_under_test['DUT']" in result.error
+        assert "Accepted values: desktop, real, virtual" in result.error
 
     def test_desktop_device_serializes_capabilities_json(self, perfecto_token, monkeypatch):
         captured: dict = {}
@@ -232,15 +596,15 @@ class TestExecuteTestDeviceMapping:
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             TEST_ID,
-            "desktop",
-            {
+            {"DUT": {
+                "device_type": "desktop",
                 "platform_name": "Windows",
                 "platform_version": "11",
                 "browser_name": "Chrome",
                 "browser_version": "120",
                 "resolution": "1920x1080",
                 "location": "US",
-            },
+            }},
         ))
 
         assert result.error is None
@@ -261,8 +625,7 @@ class TestExecuteTestDeviceMapping:
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.execute_test(
             TEST_ID,
-            "desktop",
-            {"platform_name": "Windows"},
+            {"DUT": {"device_type": "desktop", "platform_name": "Windows"}},
         ))
 
         assert result.error is None
@@ -1331,13 +1694,20 @@ class TestAiScriptlessDispatcher:
             captured["json"] = kwargs.get("json")
             return BaseResult(result={"executionId": "exec-dispatch"})
 
+        async def fake_fetch_script_payload(_token, _test_id):
+            return BaseResult(result={"script": new_empty_script()})
+
+        async def no_inventory(_self):
+            return None
+
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
+        monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch_script_payload)
+        monkeypatch.setattr(AiScriptlessManager, "_real_device_inventory", no_inventory)
 
         tool = _register_tool(perfecto_token)
         result = asyncio.run(_call_tool(tool, "execute_test", {
             "test_id": TEST_ID,
-            "device_type": "real",
-            "device_under_test": {"device_id": "DEV-1"},
+            "devices_under_test": {"DUT": {"device_id": "DEV-1"}},
         }))
 
         assert result.error is None

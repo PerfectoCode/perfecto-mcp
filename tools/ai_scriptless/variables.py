@@ -1,3 +1,4 @@
+import json
 from typing import Any, Optional
 
 
@@ -11,7 +12,12 @@ VARIABLE_TYPE_ALIASES = {
     "datatable": "TableData",
 }
 
-SUPPORTED_VARIABLE_TYPES = frozenset({"string", "secured_string", "number", "boolean"})
+SUPPORTED_VARIABLE_TYPES = frozenset({"string", "secured_string", "number", "boolean", "device"})
+
+# A device is stored as the identifier Perfecto selects the handset by; "IMEI" is the
+# selector the Select device dialog writes for every device it offers (real, virtual and
+# desktop web alike), with the identifier itself in value.
+HANDSET_SELECTOR_KEY = "IMEI"
 
 
 def validate_variable_name(name: str) -> None:
@@ -42,6 +48,15 @@ def _coerce_variable_value(variable_type: str, value: Any) -> Any:
         except (TypeError, ValueError) as exc:
             raise ValueError("number value must be an integer") from exc
         return numeric
+    if variable_type == "device":
+        # An unset device is the runtime picker the UI shows as "Select device": null, not "".
+        if value is None or value == "":
+            return None
+        # Real devices are a device_id string; virtual and desktop web are the capabilities
+        # object, serialized the way execute_test sends it.
+        if isinstance(value, dict):
+            return json.dumps(value, separators=(',', ':'))
+        return str(value)
     return "" if value is None else str(value)
 
 
@@ -63,7 +78,7 @@ def build_variable_data(variable_type: str, name: str, value: Any) -> dict[str, 
         "value": coerced_value,
     }
     if data_type == "HandsetData":
-        data["key"] = None
+        data["key"] = HANDSET_SELECTOR_KEY if coerced_value else None
     if data_type == "TableData":
         data["columns"] = []
     return data
@@ -153,11 +168,21 @@ def modify_script_variable(
     if located is None:
         raise ValueError(f"variable not found: {variable_name}")
     array_key, index, variable = located
-    if variable_name == DUT_NAME:
-        raise ValueError(
-            "DUT is the device parameter execute_test fills in; it cannot be modified here"
-        )
     current_type = _variable_type_from_data(variable.get("data", {}))
+    if variable_name == DUT_NAME:
+        # DUT can hold a default device, the way the UI's Select device dialog sets it, but it
+        # stays the runtime device parameter every step binds handsetId to: changing its type
+        # or moving it out of the runtime parameters breaks every step at once.
+        if variable_type not in (None, current_type):
+            raise ValueError(
+                f"DUT is the device parameter every step binds handsetId to; "
+                f"it cannot become a {variable_type}"
+            )
+        if set_at_runtime is False:
+            raise ValueError(
+                "DUT is supplied when the run starts; it cannot stop being a runtime parameter"
+            )
+        set_at_runtime = None
     target_type = variable_type or current_type
     if target_type not in SUPPORTED_VARIABLE_TYPES:
         raise ValueError(
@@ -234,6 +259,56 @@ def bindable_values(script: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if name:
             bindable[name] = data
     return bindable
+
+
+def device_declarations(script: dict[str, Any]) -> dict[str, Any]:
+    """Every device declaration by name, with the device it stores (None when unset)."""
+    declarations: dict[str, Any] = {}
+    for entry in list_script_variables(script):
+        data = entry.get("data", {}) if isinstance(entry, dict) else {}
+        if data.get("@type") != "HandsetData":
+            continue
+        name = data.get("name")
+        if name:
+            declarations[name] = data.get("value")
+    return declarations
+
+
+def referenced_variable_names(script: dict[str, Any]) -> set[str]:
+    """Every variable name the steps bind an argument to, at any depth.
+
+    For a device parameter this answers only half the question: one holding a device is
+    reserved whether or not a step names it, so a caller weighing what a run costs asks
+    device_declarations first and this second, for the empty ones a step still needs.
+    """
+    referenced: set[str] = set()
+
+    def read_arguments(element: dict[str, Any]) -> None:
+        for argument in element.get("arguments") or []:
+            if not isinstance(argument, dict):
+                continue
+            data = argument.get("data") or {}
+            if str(data.get("dataSource") or "").upper() != "VARIABLE":
+                continue
+            value = data.get("value")
+            if isinstance(value, str) and value:
+                referenced.add(value)
+        for validation in element.get("validations") or []:
+            if isinstance(validation, dict):
+                read_arguments(validation)
+
+    def walk(elements: Optional[list]) -> None:
+        for element in elements or []:
+            if not isinstance(element, dict):
+                continue
+            read_arguments(element)
+            walk(element.get("flowElements"))
+            for branch in element.get("branches") or []:
+                if isinstance(branch, dict):
+                    walk(branch.get("flowElements"))
+
+    walk(script.get("flowElements"))
+    return referenced
 
 
 def describe_bindable_values(script: dict[str, Any]) -> str:
