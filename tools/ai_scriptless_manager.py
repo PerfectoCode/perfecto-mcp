@@ -638,7 +638,7 @@ class AiScriptlessManager(Manager):
             return BaseResult(error="test_id is required")
         if not name:
             return BaseResult(error="name is required")
-        async with script_write_lock(test_id):
+        async with script_write_lock(self.token, test_id):
             payload_result = await fetch_script_payload(self.token, test_id)
             if payload_result.error:
                 return payload_result
