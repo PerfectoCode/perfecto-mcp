@@ -21,7 +21,7 @@ import pytest
 from config.auth import PERFECTO_USER_CONFIG_STATE_ATTR
 from config.token import PerfectoToken
 from models.result import BaseResult
-from tools.ai_scriptless import definitions
+from tools.ai_scriptless import definitions, persistence
 
 
 @pytest.fixture
@@ -45,6 +45,34 @@ def offline_command_definitions(monkeypatch):
     monkeypatch.setattr(definitions, "api_request", offline_api_request)
     yield
     definitions.reset_command_contract_cache()
+
+
+@pytest.fixture(autouse=True)
+def quick_save_read_back(monkeypatch):
+    """Read a save back once, without waiting.
+
+    load_and_mutate reads the script back until the change shows; against an
+    offline fake that never changes, waiting would only slow the suite. Tests of
+    that behaviour set their own timing.
+    """
+    monkeypatch.setattr(persistence, "CONFIRM_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(persistence, "CONFIRM_EVERY_SECONDS", 0.0)
+
+
+@pytest.fixture(autouse=True)
+def offline_lock_owner(monkeypatch):
+    """Answer the current-user lookup that every script write makes for its lock.
+
+    The fakes in the suite serve scripts, not users. Tests of the lookup itself
+    call the real one, kept as persistence.script_lock_owner before this runs.
+    """
+    from tools import ai_scriptless_manager
+
+    async def owner(_token):
+        return BaseResult(result="test-user")
+
+    monkeypatch.setattr(persistence, "script_lock_owner", owner)
+    monkeypatch.setattr(ai_scriptless_manager, "script_lock_owner", owner)
 
 
 @pytest.fixture
