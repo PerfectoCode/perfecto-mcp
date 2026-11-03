@@ -16,10 +16,21 @@ from typing import Optional, Callable, Any, Dict
 
 import httpx
 
+from config.ids import SIMPLE_ID_ALPHABET, SIMPLE_ID_LENGTH
 from config.security import validate_http_request_endpoint
 from config.token import PerfectoToken
 from config.version import __version__
 from models.result import BaseResult
+from tools.call_state import (
+    TOOLS_ACTIONS_SKIP_AUTO_DATAFRAME,
+    generate_simple_id,
+    normalize_simple_id,
+    reset_disable_dataframe_materialization,
+    reset_result_format,
+    set_disable_dataframe_materialization,
+    set_result_format,
+)
+from tools.task_runtime import run_as_task
 
 so = platform.system()  # "Windows", "Linux", "Darwin"
 version = platform.version()  # kernel / build version
@@ -212,6 +223,38 @@ def get_mcp_icon_uri():
     icon_path = get_resources_path().joinpath(name)
     icon_data = base64.standard_b64encode(icon_path.read_bytes()).decode()
     return f"data:image/png;base64,{icon_data}"
+
+
+def validate_required_args(action: str, args: Optional[Dict[str, Any]], required: list[str]) -> Optional[BaseResult]:
+    args = args or {}
+    missing = [key for key in required if key not in args or args[key] is None]
+    if not missing:
+        return None
+    missing_str = ", ".join(missing)
+    required_str = ", ".join(required)
+    return BaseResult(
+        error=(
+            f"Missing required args for action '{action}': {missing_str} not found within 'args'. "
+            f"Required args: {required_str}. Ensure parameters are passed inside the 'args' argument."
+        )
+    )
+
+
+def validate_non_empty_str_arg(
+        action: str, args: Optional[Dict[str, Any]], key: str
+) -> Optional[BaseResult]:
+    """Return BaseResult error if args[key] is missing, not a str, or only whitespace."""
+    args = args or {}
+    value = args.get(key)
+    if not isinstance(value, str) or not value.strip():
+        return BaseResult(
+            error=(
+                f"Missing required args for action '{action}': {key} must be a non-empty string "
+                f"within 'args'. Required args: {key}."
+            )
+        )
+    return None
+
 
 def normalize_action_args(arguments: Optional[Dict[str, Any]] = None) -> tuple[str, Dict[str, Any]]:
     """

@@ -20,8 +20,16 @@ from config.runtime import AppRuntime
 from config.version import __bundle__, __executable__, __uvx__, __version__
 from models.manager import Manager
 from models.result import BaseResult
-from telemetry import run_tool
-from tools.utils import normalize_action_args, timeout, user_agent
+from tools.call_state import TOOLS_ACTIONS_SKIP_AUTO_DATAFRAME
+from tools.data_tools import DataTools
+from tools.runtime_tools import run_tool_with_runtime
+from tools.utils import (
+    normalize_action_args,
+    timeout,
+    user_agent,
+    validate_non_empty_str_arg,
+    validate_required_args,
+)
 
 
 def _normalize_system(system: str) -> str:
@@ -318,12 +326,37 @@ def register(mcp, runtime: AppRuntime):
     @mcp.tool(
         name=f"{TOOLS_PREFIX}_tools",
         description="""
-Operations on Perfecto MCP tooling metadata (versioning and updates).
+Operations on Perfecto MCP tooling: version checks, session tasks, and session dataframes.
 Actions:
 - version: Return the current MCP version and runtime/platform information used by the
   user-agent and `--version` / console display.
 - check_updates: Query the GitHub repository for the latest release, compare it with the
   current version, and return release notes plus download links when an update is available.
+- tasks_get: Get task metadata by task ID and return task_result when terminal.
+    args(dict): task_id (str, required); remove_on_terminal (bool, optional);
+                wait_for_terminal_ms (int, optional); poll_interval_ms (int, optional)
+- tasks_status: Lightweight task status by task ID (no task_result payload).
+    args(dict): task_id (str, required); wait_for_terminal_ms (int, optional);
+                poll_interval_ms (int, optional)
+- tasks_list: List tasks for the current MCP session.
+    args(dict): status (str, optional); status_list (list[str], optional)
+- tasks_cancel: Cancel a running or queued task when this process owns it.
+    args(dict): task_id (str, required)
+- tasks_remove: Remove a task from the session registry.
+    args(dict): task_id (str, required)
+- dataframes_list: List dataframes and metadata for the current MCP session.
+- dataframes_get: Get dataframe metadata and schema by dataframe ID.
+    args(dict): dataframe_id (str, required)
+- dataframes_schema_groups: Group dataframe schemas for multi-dataframe queries.
+    args(dict): dataframe_id_list (list[str], optional)
+- dataframes_query: Execute read-only SQL against session dataframe tables.
+    args(dict): sql (str, required); output_format (matrix|columnar|records);
+                result_format (auto|dataframe|raw, optional)
+    requirement: ORDER BY + LIMIT + OFFSET are mandatory in every query.
+- dataframes_remove: Remove one or more dataframes from the session store.
+    args(dict): dataframe_id_list (list[str], required)
+- dataframes_clear: Remove all dataframes for the current session.
+- dataframes_sql_help: Describe supported SQL usage and blocked operations.
 Hints:
 - Prefer `version` first when the user asks what build they are running.
 - Prefer `check_updates` when the user asks whether a newer MCP release exists.
@@ -332,6 +365,9 @@ Hints:
   check is unavailable, still share the current version, and point to the releases page for a
   manual check — do not treat it as a hard failure.
 - Render release and download URLs as markdown links.
+- Before writing any dataframe SQL query, call `dataframes_sql_help`.
+- ORDER BY + LIMIT + OFFSET are mandatory in every dataframe query.
+- After a long-running tool returns a task snapshot, poll with tasks_status then tasks_get.
 """
     )
     async def tools(
@@ -341,6 +377,7 @@ Hints:
         action, args = normalize_action_args(arguments)
         runtime.configure_context(ctx)
         tools_manager = ToolsManager(ctx)
+        data_tools = DataTools(ctx, runtime.storage, runtime.scope_resolver)
 
         async def _dispatch():
             match action:
@@ -348,13 +385,84 @@ Hints:
                     return await tools_manager.version()
                 case "check_updates":
                     return await tools_manager.check_updates()
+                case "tasks_get":
+                    if validation_error := validate_required_args(action, args, ["task_id"]):
+                        return validation_error
+                    if err := validate_non_empty_str_arg(action, args, "task_id"):
+                        return err
+                    return await data_tools.tasks_get(
+                        task_id=str(args.get("task_id", "")).strip(),
+                        remove_on_terminal=bool(args.get("remove_on_terminal", True)),
+                        wait_for_terminal_ms=int(args.get("wait_for_terminal_ms", 0) or 0),
+                        poll_interval_ms=int(args.get("poll_interval_ms", 1000) or 1000),
+                    )
+                case "tasks_list":
+                    return await data_tools.tasks_list(args.get("status"), args.get("status_list"))
+                case "tasks_status":
+                    if validation_error := validate_required_args(action, args, ["task_id"]):
+                        return validation_error
+                    if err := validate_non_empty_str_arg(action, args, "task_id"):
+                        return err
+                    return await data_tools.tasks_status(
+                        task_id=str(args.get("task_id", "")).strip(),
+                        wait_for_terminal_ms=int(args.get("wait_for_terminal_ms", 0) or 0),
+                        poll_interval_ms=int(args.get("poll_interval_ms", 1000) or 1000),
+                    )
+                case "tasks_cancel":
+                    if validation_error := validate_required_args(action, args, ["task_id"]):
+                        return validation_error
+                    if err := validate_non_empty_str_arg(action, args, "task_id"):
+                        return err
+                    return await data_tools.tasks_cancel(str(args.get("task_id", "")).strip())
+                case "tasks_remove":
+                    if validation_error := validate_required_args(action, args, ["task_id"]):
+                        return validation_error
+                    if err := validate_non_empty_str_arg(action, args, "task_id"):
+                        return err
+                    return await data_tools.tasks_remove(str(args.get("task_id", "")).strip())
+                case "dataframes_list":
+                    return await data_tools.dataframes_list()
+                case "dataframes_get":
+                    if validation_error := validate_required_args(action, args, ["dataframe_id"]):
+                        return validation_error
+                    if err := validate_non_empty_str_arg(action, args, "dataframe_id"):
+                        return err
+                    return await data_tools.dataframes_get(str(args.get("dataframe_id", "")).strip())
+                case "dataframes_schema_groups":
+                    return await data_tools.dataframes_schema_groups(args.get("dataframe_id_list"))
+                case "dataframes_query":
+                    if validation_error := validate_required_args(action, args, ["sql"]):
+                        return validation_error
+                    if err := validate_non_empty_str_arg(action, args, "sql"):
+                        return err
+                    return await data_tools.dataframes_query(
+                        sql=str(args.get("sql", "")).strip(),
+                        output_format=str(args.get("output_format", "matrix")),
+                        result_format=str(args.get("result_format", "auto")),
+                    )
+                case "dataframes_remove":
+                    if validation_error := validate_required_args(action, args, ["dataframe_id_list"]):
+                        return validation_error
+                    return await data_tools.dataframes_remove(args.get("dataframe_id_list"))
+                case "dataframes_clear":
+                    return await data_tools.dataframes_clear()
+                case "dataframes_sql_help":
+                    return await data_tools.dataframes_sql_help()
                 case _:
                     return BaseResult(
                         error=f"Action {action} not found in tools manager tool"
                     )
 
         try:
-            return await run_tool(f"{TOOLS_PREFIX}_tools", action, ctx, _dispatch)
+            return await run_tool_with_runtime(
+                runtime,
+                f"{TOOLS_PREFIX}_tools",
+                action,
+                ctx,
+                _dispatch,
+                tool_args=args,
+                dataframe_excluded_actions=set(TOOLS_ACTIONS_SKIP_AUTO_DATAFRAME),
+            )
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {traceback.format_exc()}"

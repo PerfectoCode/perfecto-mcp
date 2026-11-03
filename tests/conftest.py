@@ -24,6 +24,20 @@ from models.result import BaseResult
 from tools.ai_scriptless import definitions
 
 
+@pytest.fixture(autouse=True)
+def isolated_session_cache():
+    """Keep dataframe tasks and the method cache from leaking across tests."""
+    from config.cache import InMemoryTTLCache, configure_cache
+    from config.storage import InMemorySessionStorageProvider
+    from tools.async_task_manager import configure_task_storage
+
+    configure_task_storage(InMemorySessionStorageProvider())
+    configure_cache(InMemoryTTLCache(max_entries=64, sweep_interval_seconds=0))
+    yield
+    configure_task_storage(InMemorySessionStorageProvider())
+    configure_cache(InMemoryTTLCache(max_entries=64, sweep_interval_seconds=0))
+
+
 @pytest.fixture
 def perfecto_token() -> PerfectoToken:
     return PerfectoToken("test-token", "demo")

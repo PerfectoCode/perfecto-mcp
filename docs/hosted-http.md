@@ -68,8 +68,24 @@ docker run --rm -p 8000:8000 \
 | `FASTMCP_PORT` | Listen port (HTTP only). Also accepts `PORT` (e.g. Cloud Run) | `8000` |
 | `FASTMCP_STREAMABLE_HTTP_PATH` | HTTP path for the MCP endpoint | `/mcp` |
 | `PERFECTO_CLOUD_NAME` | Fallback cloud when the `Perfecto-Cloud-Name` header is absent | *(unset)* |
+| `PERFECTO_STORAGE_API_BASE_URL` | Storage service base URL. When set on HTTP, session dataframes, async tasks and the method cache are stored there (`/session-partitions/...`, `/cache/entries`) so they survive across workers. Unset keeps them in process memory. | *(unset)* |
+| `PERFECTO_MCP_STORAGE_CALLER_TOKEN` | Bearer token the MCP sends to the storage service. Required when `PERFECTO_STORAGE_API_BASE_URL` is set. | *(unset)* |
+| `PERFECTO_MCP_CACHE_ENABLED` | Method cache on or off | `true` |
+| `PERFECTO_MCP_MAX_PARALLEL_TASKS` | Async tasks running at once in this process | `10` |
+| `PERFECTO_MCP_SESSION_STORAGE_TIMEOUT_SECONDS` | Timeout for storage partition calls | `15` |
+
+## Session dataframes, tasks and cache
+
+Large tool results are stored as a session dataframe instead of being pasted into the model context. Slow calls return a task id; the model polls `perfecto_tools` (`tasks_status`, then `tasks_get`) and reads rows with `dataframes_query`.
+
+Partitions are keyed by a hash of the security token plus cloud, and by the MCP session id (`mcp-session-id`, otherwise `local` for stdio). Two credentials never share dataframes.
+
+- Stdio and HTTP without a storage URL keep partitions and the method cache in memory. Restarting the process drops them. One HTTP process can serve that data; another process cannot see it.
+- HTTP with `PERFECTO_STORAGE_API_BASE_URL` writes partitions and cache entries to the storage service. Set `PERFECTO_MCP_STORAGE_CALLER_TOKEN` to the caller token that service expects. The service must be reachable at startup (`GET /health`).
+- The method cache (`@ttl_cache_method`) stores help pages and other repeated reads. A cache failure is a miss: the tool still runs. User-scoped entries are keyed by the same credential hash as partitions.
 
 ## Limitations
 
-- No session storage service: session state is not shared across server instances.
+- Without the storage service, session dataframes and tasks are not shared across server instances.
 - File upload / local file access is not supported by Perfecto MCP on any transport.
+- Cancelling a task only stops the worker that is running it. Another instance may still finish and write the result.

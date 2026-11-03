@@ -14,9 +14,11 @@ from formatters.help import format_list_real_devices_extended_commands_info, \
     format_read_real_devices_extended_command_info, format_help_info
 from models.manager import Manager
 from models.result import BaseResult
-from telemetry import run_tool
+from config.cache import CacheScope
 from tools.help_utils import convert_js_to_py_dict
-from tools.utils import http_request, format_sanitized_traceback, normalize_action_args
+from tools.method_cache import ttl_cache_method
+from tools.runtime_tools import run_tool_with_runtime
+from tools.utils import http_request, format_sanitized_traceback, normalize_action_args, run_as_task
 
 
 class HelpManager(Manager):
@@ -118,6 +120,8 @@ class HelpManager(Manager):
                 }
         HelpManager.help_tree = help_tree
 
+    @ttl_cache_method(ttl_seconds=300, scope=CacheScope.GLOBAL)
+    @run_as_task()
     async def list_help_categories(self) -> BaseResult:
         if HelpManager.help_tree is None:
             await self._load_help_tree()
@@ -133,6 +137,8 @@ class HelpManager(Manager):
             info=["A list of subcategories is provided for each category"]
         )
 
+    @ttl_cache_method(ttl_seconds=300, scope=CacheScope.GLOBAL)
+    @run_as_task()
     async def list_help_category_content(self, category_id: str, subcategory_id_list: List[str]) -> BaseResult:
         if not isinstance(subcategory_id_list, list) or not subcategory_id_list:
             return BaseResult(
@@ -153,6 +159,8 @@ class HelpManager(Manager):
             result=results,
         )
 
+    @ttl_cache_method(ttl_seconds=300, scope=CacheScope.GLOBAL)
+    @run_as_task()
     async def read_help_info(self, category_id: str, subcategory_id: str, help_id_list: List[str]) -> BaseResult:
         if not isinstance(help_id_list, list) or not help_id_list:
             return BaseResult(
@@ -212,6 +220,8 @@ class HelpManager(Manager):
             },
         )
 
+    @ttl_cache_method(ttl_seconds=300, scope=CacheScope.GLOBAL)
+    @run_as_task()
     async def list_real_devices_extended_commands(self) -> BaseResult:
         real_devices_extended_commands_help_url = get_real_devices_extended_commands_help_url()
         commands_result = await http_request("GET", endpoint=real_devices_extended_commands_help_url,
@@ -298,7 +308,9 @@ Hints:
                     )
 
         try:
-            return await run_tool(f"{TOOLS_PREFIX}_help", action, ctx, _dispatch)
+            return await run_tool_with_runtime(
+                runtime, f"{TOOLS_PREFIX}_help", action, ctx, _dispatch, tool_args=args,
+            )
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {format_sanitized_traceback()}"
