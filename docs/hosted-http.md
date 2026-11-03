@@ -4,6 +4,30 @@ Operator and advanced client guide for running Perfecto MCP over HTTP. For the s
 
 ## Client configuration
 
+### Official hosted endpoint
+
+Perfecto hosts a streamable HTTP server at `https://mcp.perfectomobile.com/mcp`.
+
+[![Add to Cursor (HTTP)](https://img.shields.io/badge/Add_to_Cursor-HTTP_install-blue?style=for-the-badge)](https://cursor.com/en-US/install-mcp?name=Perfecto%20MCP&config=eyJ1cmwiOiJodHRwczovL21jcC5wZXJmZWN0b21vYmlsZS5jb20vbWNwIiwiaGVhZGVycyI6eyJBdXRob3JpemF0aW9uIjoiQmVhcmVyIDxzZWN1cml0eVRva2VuPiIsIlBlcmZlY3RvLUNsb3VkLU5hbWUiOiI8Y2xvdWROYW1lPiJ9fQ%3D%3D) [![Add to VS Code (HTTP)](https://img.shields.io/badge/Add_to_VS_Code-HTTP_install-007ACC?style=for-the-badge&logo=visualstudiocode)](https://insiders.vscode.dev/redirect/mcp/install?name=Perfecto%20MCP&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fmcp.perfectomobile.com%2Fmcp%22%2C%22headers%22%3A%7B%22Authorization%22%3A%22Bearer%20%3CsecurityToken%3E%22%2C%22Perfecto-Cloud-Name%22%3A%22%3CcloudName%3E%22%7D%7D)
+
+```json
+{
+  "mcpServers": {
+    "Perfecto MCP": {
+      "url": "https://mcp.perfectomobile.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <securityToken>",
+        "Perfecto-Cloud-Name": "<cloudName>"
+      }
+    }
+  }
+}
+```
+
+After installing, replace `<securityToken>` and `<cloudName>`.
+
+### Local server
+
 Configure the MCP client with the server URL, your Perfecto security token as Bearer credentials, and the Perfecto cloud to target:
 
 ```json
