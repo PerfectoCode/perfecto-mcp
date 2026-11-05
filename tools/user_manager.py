@@ -11,14 +11,18 @@ from config.token import token_verify
 from formatters.user import format_users
 from models.manager import Manager
 from models.result import BaseResult
-from telemetry import run_tool
-from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
+from config.cache import CacheScope
+from tools.method_cache import ttl_cache_method
+from tools.runtime_tools import run_tool_with_runtime
+from tools.utils import api_request, format_sanitized_traceback, normalize_action_args, run_as_task
 
 class UserManager(Manager):
     def __init__(self, ctx: Context):
         super().__init__(ctx)
 
     @token_verify
+    @ttl_cache_method(ttl_seconds=60, scope=CacheScope.USER)
+    @run_as_task()
     async def read_user(self) -> BaseResult:
         user_url = perfecto.get_user_management_api_url(self.token.cloud_name)
         user_url = user_url + "/current"
@@ -64,7 +68,9 @@ Hints:
                     )
 
         try:
-            return await run_tool(f"{TOOLS_PREFIX}_user", action, ctx, _dispatch)
+            return await run_tool_with_runtime(
+                runtime, f"{TOOLS_PREFIX}_user", action, ctx, _dispatch, tool_args=args,
+            )
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {format_sanitized_traceback()}"

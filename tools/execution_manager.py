@@ -12,8 +12,10 @@ from config.token import token_verify
 from formatters.execution import format_executions
 from models.manager import Manager
 from models.result import BaseResult, PaginationResult
-from telemetry import run_tool
-from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
+from config.cache import CacheScope
+from tools.method_cache import ttl_cache_method
+from tools.runtime_tools import run_tool_with_runtime
+from tools.utils import api_request, format_sanitized_traceback, normalize_action_args, run_as_task
 
 
 class ExecutionManager(Manager):
@@ -53,6 +55,8 @@ class ExecutionManager(Manager):
         }
 
     @token_verify
+    @ttl_cache_method(ttl_seconds=15, scope=CacheScope.USER)
+    @run_as_task()
     async def list_live_executions(self) -> BaseResult:
         execution_management_url = perfecto.get_execution_management_api_url(self.token.cloud_name)
         execution_management_url = execution_management_url + "/search"
@@ -77,12 +81,16 @@ class ExecutionManager(Manager):
             )
 
     @token_verify
+    @ttl_cache_method(ttl_seconds=60, scope=CacheScope.USER)
+    @run_as_task()
     async def list_report_names(self) -> BaseResult:
         report_management_url = perfecto.get_test_execution_name_api_url(self.token.cloud_name)
         body = {}
         return await api_request(self.token, "POST", endpoint=report_management_url, json=body)
 
     @token_verify
+    @ttl_cache_method(ttl_seconds=60, scope=CacheScope.USER)
+    @run_as_task()
     async def list_filter_values(self, filter_names: list[str]) -> BaseResult:
         metadata_management_url = perfecto.get_test_execution_metadata_api_url(self.token.cloud_name)
 
@@ -112,6 +120,8 @@ class ExecutionManager(Manager):
         )
 
     @token_verify
+    @ttl_cache_method(ttl_seconds=30, scope=CacheScope.USER)
+    @run_as_task()
     async def list_report_executions(self, args: dict[str, Any]) -> BaseResult:
         page_size = 50
         page_index = args.get("page_index", 1)
@@ -193,6 +203,8 @@ class ExecutionManager(Manager):
         )
 
     @token_verify
+    @ttl_cache_method(ttl_seconds=60, scope=CacheScope.USER)
+    @run_as_task()
     async def red_report_execution(self, execution_id: str) -> BaseResult:
 
         report_commands_url = perfecto.get_test_execution_commands_api_url(self.token.cloud_name) + "/"
@@ -283,7 +295,9 @@ Hints:
                     )
 
         try:
-            return await run_tool(f"{TOOLS_PREFIX}_execution", action, ctx, _dispatch)
+            return await run_tool_with_runtime(
+                runtime, f"{TOOLS_PREFIX}_execution", action, ctx, _dispatch, tool_args=args,
+            )
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {format_sanitized_traceback()}"

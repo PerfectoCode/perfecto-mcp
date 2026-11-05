@@ -12,8 +12,10 @@ from formatters.device import format_real_device, format_virtual_device
 from formatters.grid import format_grid_info
 from models.manager import Manager
 from models.result import BaseResult
-from telemetry import run_tool
-from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
+from config.cache import CacheScope
+from tools.method_cache import ttl_cache_method
+from tools.runtime_tools import run_tool_with_runtime
+from tools.utils import api_request, format_sanitized_traceback, normalize_action_args, run_as_task
 
 
 class DeviceManager(Manager):
@@ -21,6 +23,8 @@ class DeviceManager(Manager):
         super().__init__(ctx)
 
     @token_verify
+    @ttl_cache_method(ttl_seconds=60, scope=CacheScope.USER)
+    @run_as_task()
     async def read_selenium_grid_info(self) -> BaseResult:
         tenant_url = perfecto.get_tenant_management_api_url(self.token.cloud_name)
         tenant_response = await api_request(self.token, "GET", endpoint=tenant_url, result_formatter=format_grid_info)
@@ -34,6 +38,8 @@ class DeviceManager(Manager):
         return tenant_response
 
     @token_verify
+    @ttl_cache_method(ttl_seconds=60, scope=CacheScope.USER)
+    @run_as_task()
     async def list_real_devices(self) -> BaseResult:
         devices_url = perfecto.get_real_device_management_api_url(self.token.cloud_name)
         # List all devices
@@ -45,17 +51,23 @@ class DeviceManager(Manager):
                                  result_formatter=format_real_device)
 
     @token_verify
+    @ttl_cache_method(ttl_seconds=60, scope=CacheScope.USER)
+    @run_as_task()
     async def read_real_device_info(self, device_id: str) -> BaseResult:
         devices_url = perfecto.get_real_device_management_api_url(self.token.cloud_name)
         devices_url = f"{devices_url}/{device_id}"
         return await api_request(self.token, "GET", endpoint=devices_url)
 
     @token_verify
+    @ttl_cache_method(ttl_seconds=60, scope=CacheScope.USER)
+    @run_as_task()
     async def list_virtual_devices(self) -> BaseResult:
         virtual_device_url = perfecto.get_virtual_device_management_api_url(self.token.cloud_name)
         return await api_request(self.token, "GET", endpoint=virtual_device_url, result_formatter=format_virtual_device)
 
     @token_verify
+    @ttl_cache_method(ttl_seconds=60, scope=CacheScope.USER)
+    @run_as_task()
     async def list_desktop_devices(self) -> BaseResult:
         virtual_web_url = perfecto.get_web_desktop_management_api_url(self.token.cloud_name)
         return await api_request(self.token, "GET", endpoint=virtual_web_url)
@@ -102,7 +114,9 @@ Actions:
                     )
 
         try:
-            return await run_tool(f"{TOOLS_PREFIX}_devices", action, ctx, _dispatch)
+            return await run_tool_with_runtime(
+                runtime, f"{TOOLS_PREFIX}_devices", action, ctx, _dispatch, tool_args=args,
+            )
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {format_sanitized_traceback()}"

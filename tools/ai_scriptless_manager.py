@@ -17,7 +17,7 @@ from formatters.ai_scriptless import format_ai_scriptless_tests, \
     format_step_detail, format_test_structure, format_test_variables
 from models.manager import Manager
 from models.result import BaseResult, PaginationResult
-from telemetry import run_tool
+from tools.runtime_tools import run_tool_with_runtime
 from tools.ai_scriptless_script import (
     DUT_NAME,
     add_script_variable,
@@ -63,7 +63,7 @@ from tools.ai_scriptless_script import (
     validate_variable_bindings,
 )
 from tools.ai_scriptless.definitions import SUPPORTED_ERROR_POLICIES
-from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
+from tools.utils import api_request, format_sanitized_traceback, normalize_action_args, run_as_task
 
 STEP_PATH_REFRESH_NOTES = [
     "step_path values are dot-separated positional paths (e.g. 0, 2.0, 5.b0.1); Perfecto does not persist them.",
@@ -132,6 +132,7 @@ class AiScriptlessManager(Manager):
         super().__init__(ctx)
 
     @token_verify
+    @run_as_task()
     async def list_tests(self, args: dict[str, Any]) -> BaseResult:
         page_size = 50
         page_index = args.get("page_index", 1)
@@ -163,6 +164,7 @@ class AiScriptlessManager(Manager):
         return _append_ui_access_info(result, self.token.cloud_name)
 
     @token_verify
+    @run_as_task()
     async def list_filter_values(self, filter_names: list[str]) -> BaseResult:
         tree_url = perfecto.get_ai_scriptless_api_url(self.token.cloud_name)
         tree_url = tree_url + "/scripts/tree"
@@ -381,6 +383,7 @@ class AiScriptlessManager(Manager):
     )
 
     @token_verify
+    @run_as_task()
     async def execute_test(
             self,
             test_id: str,
@@ -426,6 +429,7 @@ class AiScriptlessManager(Manager):
         return result
 
     @token_verify
+    @run_as_task()
     async def list_commands(self, checkpoint: bool = False) -> BaseResult:
         commands_url = perfecto.get_ai_scriptless_command_repository_url(self.token.cloud_name)
         commands_url = commands_url + "/commands"
@@ -438,6 +442,7 @@ class AiScriptlessManager(Manager):
         return result
 
     @token_verify
+    @run_as_task()
     async def get_command_definitions(self, command_ids: list[str]) -> BaseResult:
         if not command_ids:
             return BaseResult(error="command_ids is required and must not be empty")
@@ -448,6 +453,7 @@ class AiScriptlessManager(Manager):
                                  result_formatter=format_command_definitions)
 
     @token_verify
+    @run_as_task()
     async def view_test_structure(self, test_id: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
@@ -459,6 +465,7 @@ class AiScriptlessManager(Manager):
         return _append_ui_access_info(result, self.token.cloud_name, test_id)
 
     @token_verify
+    @run_as_task()
     async def view_test_step(self, test_id: str, step_path: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
@@ -849,6 +856,7 @@ class AiScriptlessManager(Manager):
         return result
 
     @token_verify
+    @run_as_task()
     async def list_snapshots(self, test_id: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
@@ -869,6 +877,7 @@ class AiScriptlessManager(Manager):
         )
 
     @token_verify
+    @run_as_task()
     async def view_snapshot(self, snapshot_id: str) -> BaseResult:
         if not snapshot_id:
             return BaseResult(error="snapshot_id is required (key from list_snapshots)")
@@ -887,6 +896,7 @@ class AiScriptlessManager(Manager):
         )
 
     @token_verify
+    @run_as_task()
     async def list_test_variables(self, test_id: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
@@ -1430,7 +1440,9 @@ Hints:
                     return BaseResult(error=_unknown_action_error(action, args))
 
         try:
-            return await run_tool(f"{TOOLS_PREFIX}_ai_scriptless", action, ctx, _dispatch)
+            return await run_tool_with_runtime(
+                runtime, f"{TOOLS_PREFIX}_ai_scriptless", action, ctx, _dispatch, tool_args=args,
+            )
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {format_sanitized_traceback()}"

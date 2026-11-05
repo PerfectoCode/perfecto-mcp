@@ -156,6 +156,8 @@ def run_streamable_http(mcp: FastMCP) -> None:
     register_health_routes(mcp)
 
     async def _serve() -> None:
+        from config.http_clients import aclose_http_clients
+
         app = BearerAuthMiddleware(mcp.streamable_http_app())
         config = uvicorn.Config(
             app,
@@ -163,6 +165,14 @@ def run_streamable_http(mcp: FastMCP) -> None:
             port=mcp.settings.port,
             log_level=mcp.settings.log_level.lower(),
         )
-        await uvicorn.Server(config).serve()
+        try:
+            await uvicorn.Server(config).serve()
+        finally:
+            from config.cache import get_cache
+
+            try:
+                await get_cache().close()
+            finally:
+                await aclose_http_clients()
 
     anyio.run(_serve)

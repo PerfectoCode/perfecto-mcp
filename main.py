@@ -157,6 +157,9 @@ def build_mcp_server(
 
 ## Important Guidelines
 - **Batch Operations**: When making multiple calls to the same tool, check if that tool supports a `batch` action and use it instead of separate calls.
+- **Large results**: Results that are too large for the conversation are stored as a session dataframe. Use `perfecto_tools` actions `dataframes_list`, `dataframes_get`, `dataframes_schema_groups` and `dataframes_query` to inspect them. Every SQL query must include ORDER BY, LIMIT and OFFSET. Call `dataframes_sql_help` before writing SQL. Remove dataframes with `dataframes_remove` or `dataframes_clear` when finished.
+- **Long-running calls**: If a tool returns a task snapshot instead of the final payload, poll `perfecto_tools` action `tasks_status`, then `tasks_get` for the result. Do not start the same operation again while its task is still working.
+- **Result format**: Optional `result_format` on tool args: `auto` (default, store only large results), `dataframe` (always store), `raw` (always return inline).
 - **Don't assume / Don't invent**: If something is unclear, consult Skills/Help before responding.
 - **Provide resources**: Include markdown-formatted links to Perfecto help documentation when relevant.
 """

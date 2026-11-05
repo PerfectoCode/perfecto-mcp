@@ -9,6 +9,15 @@ from config.auth import (
     HttpAuthProvider,
     StdioAuthProvider,
 )
+from config.cache import CachePort, build_cache_from_env
+from config.service_auth import service_caller_token
+from config.storage import (
+    DefaultSessionScopeResolver,
+    HttpSessionStorageProvider,
+    InMemorySessionStorageProvider,
+    SessionScopeResolverPort,
+    SessionStoragePort,
+)
 from config.token import PerfectoToken
 
 Transport = Literal["stdio", "streamable-http"]
@@ -57,6 +66,9 @@ class AppRuntime:
     transport: Transport
     auth: AuthPort
     user_config: dict[str, Any]
+    storage: SessionStoragePort
+    scope_resolver: SessionScopeResolverPort
+    cache: CachePort
 
     def resolve_user_config(self, ctx: Any) -> dict[str, Any]:
         user_config = dict(self.user_config)
@@ -111,16 +123,51 @@ def _hydrate_ctx_user_config(ctx: Any, user_config: dict[str, Any]) -> None:
             setattr(target, PERFECTO_USER_CONFIG_STATE_ATTR, dict(config_copy))
 
 
+def _storage_base_url() -> str:
+    return os.getenv("PERFECTO_STORAGE_API_BASE_URL", "").strip()
+
+
+def _build_storage_and_cache(transport: Transport) -> tuple[SessionStoragePort, CachePort]:
+    """
+    Stdio, and HTTP without a storage URL, keep partitions and the method cache
+    in this process. HTTP with ``PERFECTO_STORAGE_API_BASE_URL`` uses the shared
+    storage service so dataframes, tasks and cache entries survive across workers.
+    """
+    storage_base_url = _storage_base_url()
+    if transport == "streamable-http" and storage_base_url:
+        caller_token = service_caller_token()
+        if not caller_token:
+            raise ValueError(
+                "PERFECTO_MCP_STORAGE_CALLER_TOKEN is required when "
+                "PERFECTO_STORAGE_API_BASE_URL is set."
+            )
+        storage: SessionStoragePort = HttpSessionStorageProvider(
+            base_url=storage_base_url,
+            caller_token=caller_token,
+        )
+        storage.ensure_available()
+        return storage, build_cache_from_env(
+            "streamable-http",
+            storage_base_url=storage_base_url,
+            caller_token=caller_token,
+        )
+
+    # In-memory cache factory is the stdio path of build_cache_from_env.
+    return InMemorySessionStorageProvider(), build_cache_from_env("stdio")
+
+
 def build_runtime(
         transport: Transport,
         startup_token: Optional[PerfectoToken] = None,
 ) -> AppRuntime:
     """
-    Compose auth for the selected transport.
+    Compose auth, session storage and the method cache for the selected transport.
 
-    - stdio: process-lifetime ``startup_token``.
-    - streamable-http: request-scoped Bearer auth.
+    - stdio: process-lifetime ``startup_token`` and in-memory partitions.
+    - streamable-http: request-scoped Bearer auth. Partitions stay in memory
+      unless ``PERFECTO_STORAGE_API_BASE_URL`` points at the storage service.
     """
+    storage, cache = _build_storage_and_cache(transport)
     if transport == "stdio":
         stdio_user_config = {
             "startup_token": startup_token,
@@ -131,6 +178,9 @@ def build_runtime(
             transport=transport,
             auth=StdioAuthProvider(startup_token),
             user_config=stdio_user_config,
+            storage=storage,
+            scope_resolver=DefaultSessionScopeResolver(),
+            cache=cache,
         )
 
     if transport == "streamable-http":
@@ -138,6 +188,9 @@ def build_runtime(
             transport=transport,
             auth=HttpAuthProvider(),
             user_config={},
+            storage=storage,
+            scope_resolver=DefaultSessionScopeResolver(),
+            cache=cache,
         )
 
     raise ValueError(f"Unknown transport: {transport}")
