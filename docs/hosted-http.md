@@ -44,9 +44,11 @@ Configure the MCP client with the server URL, your Perfecto security token as Be
 
 Transport resolution precedence: **CLI `--mcp` > `PERFECTO_MCP_TRANSPORT` > stdio**.
 
+`--confirm` selects which mutating operations ask the client to confirm before they run (`DELETE` by default, `CUD`, or `DISABLE`). It is a process argument, independent of transport. See the [README](../README.md#confirmation).
+
 ```bash
 # From source
-uv run python main.py --mcp http
+uv run python main.py --mcp http --confirm CUD
 # or
 PERFECTO_MCP_TRANSPORT=http FASTMCP_HOST=0.0.0.0 FASTMCP_PORT=8000 uv run python main.py --mcp
 

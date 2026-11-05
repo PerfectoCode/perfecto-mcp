@@ -22,11 +22,20 @@ from config.auth import PERFECTO_USER_CONFIG_STATE_ATTR
 from config.token import PerfectoToken
 from models.result import BaseResult
 from tools.ai_scriptless import definitions
+from tools.utils import ConfirmMode, register_confirm_mode
 
 
 @pytest.fixture
 def perfecto_token() -> PerfectoToken:
     return PerfectoToken("test-token", "demo")
+
+
+@pytest.fixture(autouse=True)
+def reset_confirm_mode():
+    """Each test starts and ends on the production default (confirm deletes only)."""
+    register_confirm_mode(ConfirmMode.DELETE)
+    yield
+    register_confirm_mode(ConfirmMode.DELETE)
 
 
 @pytest.fixture(autouse=True)
@@ -88,13 +97,22 @@ def declare_commands(monkeypatch, offline_command_definitions):
     return declare
 
 
-def make_ctx(token: Optional[PerfectoToken] = None, **user_config: Any) -> SimpleNamespace:
+def make_ctx(
+        token: Optional[PerfectoToken] = None,
+        *,
+        elicit: Any = "accept",
+        **user_config: Any,
+) -> SimpleNamespace:
     """
     Minimal Context stand-in carrying the per-session user config.
 
     Mirrors what AppRuntime.configure_context hydrates at runtime, so managers
     resolve their token from the context in tests the same way they do in
     production.
+
+    ``elicit`` stubs MCP elicitation used by confirmation prompts:
+    ``"accept"`` (default), ``"decline"``, ``"missing"`` (no elicit method),
+    or a callable used as ``ctx.elicit``.
     """
     config: dict[str, Any] = dict(user_config)
     if token is not None:
@@ -103,7 +121,23 @@ def make_ctx(token: Optional[PerfectoToken] = None, **user_config: Any) -> Simpl
 
     request_context = SimpleNamespace(request=None)
     setattr(request_context, PERFECTO_USER_CONFIG_STATE_ATTR, config)
-    return SimpleNamespace(request_context=request_context)
+    ctx = SimpleNamespace(request_context=request_context)
+
+    if elicit == "missing":
+        return ctx
+    if elicit == "accept":
+        async def _elicit(message, schema):
+            return SimpleNamespace(action="accept", data=schema())
+    elif elicit == "decline":
+        async def _elicit(message, schema):
+            return SimpleNamespace(action="decline", data=None)
+    elif callable(elicit):
+        _elicit = elicit
+    else:
+        raise ValueError(f"Unknown elicit mode: {elicit!r}")
+
+    ctx.elicit = _elicit
+    return ctx
 
 
 @pytest.fixture

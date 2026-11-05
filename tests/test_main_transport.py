@@ -1,9 +1,12 @@
+import sys
+
 import pytest
 
 import main
 from config.auth import HttpAuthProvider, StdioAuthProvider
 from config.runtime import AppRuntime, resolve_http_bind_settings
 from mcp.server.fastmcp.utilities import func_metadata
+from tools.utils import ConfirmMode, get_confirm_mode
 
 
 class _DummyFastMCP:
@@ -231,3 +234,39 @@ class TestRunTransportDispatch:
 
         assert calls["stdio"] == 1
         assert calls["http"] == 0
+
+
+class TestConfirmModeWiring:
+    def test_build_mcp_server_registers_confirm_mode(self, monkeypatch):
+        _patch_mcp_server_dependencies(monkeypatch)
+
+        main.build_mcp_server(transport="stdio", confirm_mode=ConfirmMode.DISABLE)
+
+        assert get_confirm_mode() is ConfirmMode.DISABLE
+
+    def test_cli_confirm_flag_reaches_run(self, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(main, "init_logging", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(main, "run", lambda **kwargs: captured.update(kwargs))
+        monkeypatch.setattr(sys, "argv", ["perfecto-mcp", "--mcp", "http", "--confirm", "cud"])
+
+        main.main()
+
+        assert captured["transport"] == "http"
+        assert captured["confirm_mode"] is ConfirmMode.CUD
+
+    def test_cli_confirm_defaults_to_delete(self, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(main, "init_logging", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(main, "run", lambda **kwargs: captured.update(kwargs))
+        monkeypatch.setattr(sys, "argv", ["perfecto-mcp", "--mcp"])
+
+        main.main()
+
+        assert captured["confirm_mode"] is ConfirmMode.DELETE
+
+    def test_cli_rejects_unknown_confirm_mode(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["perfecto-mcp", "--mcp", "--confirm", "BANANA"])
+
+        with pytest.raises(SystemExit):
+            main.main()
