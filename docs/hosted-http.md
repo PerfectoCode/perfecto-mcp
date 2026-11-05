@@ -72,16 +72,19 @@ docker run --rm -p 8000:8000 \
 | `PERFECTO_MCP_STORAGE_CALLER_TOKEN` | Bearer token the MCP sends to the storage service. Required when `PERFECTO_STORAGE_API_BASE_URL` is set. | *(unset)* |
 | `PERFECTO_MCP_CACHE_ENABLED` | Method cache on or off | `true` |
 | `PERFECTO_MCP_MAX_PARALLEL_TASKS` | Async tasks running at once in this process | `10` |
-| `PERFECTO_MCP_SESSION_STORAGE_TIMEOUT_SECONDS` | Timeout for storage partition calls | `15` |
+| `PERFECTO_MCP_SESSION_STORAGE_TIMEOUT_SECONDS` | Timeout for storage partition and hosted session calls | `15` |
+| `PERFECTO_MCP_SESSION_IDLE_TIMEOUT_SECONDS` | In-process session idle time before it expires | `604800` (7 days) |
+| `PERFECTO_MCP_SESSION_PURGE_GRACE_SECONDS` | How long an expired in-process session is kept after the first expired answer | `3600` |
+| `PERFECTO_MCP_SESSION_SWEEP_INTERVAL_SECONDS` | Minimum time between in-process session sweeps | `60` |
 
 ## Session dataframes, tasks and cache
 
 Large tool results are stored as a session dataframe instead of being pasted into the model context. Slow calls return a task id; the model polls `perfecto_tools` (`tasks_status`, then `tasks_get`) and reads rows with `dataframes_query`.
 
-Partitions are keyed by a hash of the security token plus cloud, and by the MCP session id (`mcp-session-id`, otherwise `local` for stdio). Two credentials never share dataframes.
+Call `perfecto_session` action `get` once per conversation and pass the returned `session_id` on every later tool call. Partitions are keyed by a hash of the security token plus cloud, and by that chat session id. Two credentials never share dataframes, and two conversations of the same credential do not either. An idle session expires, then its partition is dropped. `SESSION_REQUIRED`, `SESSION_INVALID` and `SESSION_EXPIRED` mean the model must call `perfecto_session` `get` again.
 
-- Stdio and HTTP without a storage URL keep partitions and the method cache in memory. Restarting the process drops them. One HTTP process can serve that data; another process cannot see it.
-- HTTP with `PERFECTO_STORAGE_API_BASE_URL` writes partitions and cache entries to the storage service. Set `PERFECTO_MCP_STORAGE_CALLER_TOKEN` to the caller token that service expects. The service must be reachable at startup (`GET /health`).
+- Stdio and HTTP without a storage URL keep sessions, partitions and the method cache in memory. Restarting the process drops them. One HTTP process can serve that data; another process cannot see it.
+- HTTP with `PERFECTO_STORAGE_API_BASE_URL` writes sessions (`/sessions`), partitions and cache entries to the storage service. Set `PERFECTO_MCP_STORAGE_CALLER_TOKEN` to the caller token that service expects. The service must be reachable at startup (`GET /health`).
 - The method cache (`@ttl_cache_method`) stores help pages and other repeated reads. A cache failure is a miss: the tool still runs. User-scoped entries are keyed by the same credential hash as partitions.
 
 ## Limitations

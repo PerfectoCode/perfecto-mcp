@@ -197,10 +197,12 @@ def test_runtime_uses_memory_until_a_storage_url_is_configured(monkeypatch):
     monkeypatch.delenv("PERFECTO_MCP_STORAGE_CALLER_TOKEN", raising=False)
     runtime = build_runtime("stdio", startup_token=PerfectoToken("token-a", "demo"))
     assert runtime.storage.__class__.__name__ == "InMemorySessionStorageProvider"
+    assert runtime.sessions.__class__.__name__ == "InMemorySessionProvider"
     assert runtime.cache.__class__.__name__ == "InMemoryTTLCache"
 
     http_runtime = build_runtime("streamable-http")
     assert http_runtime.storage.__class__.__name__ == "InMemorySessionStorageProvider"
+    assert http_runtime.sessions.__class__.__name__ == "InMemorySessionProvider"
 
     monkeypatch.setenv("PERFECTO_STORAGE_API_BASE_URL", "http://storage.internal")
     try:

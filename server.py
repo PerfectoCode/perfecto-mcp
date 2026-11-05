@@ -5,6 +5,8 @@ from tools.async_task_manager import configure_task_storage
 from tools.device_manager import register as register_device_manager
 from tools.execution_manager import register as register_execution_manager
 from tools.help_manager import register as register_help_manager
+from tools.session_gate import annotate_session_requirements
+from tools.session_manager import register as register_session_manager
 from tools.skills_manager import register as register_skills_manager
 from tools.tools_manager import register as register_tools_manager
 from tools.user_manager import register as register_user_manager
@@ -21,6 +23,7 @@ def register_tools(mcp, runtime: AppRuntime):
     configure_task_storage(runtime.storage)
     if runtime.cache is not None:
         configure_cache(runtime.cache)
+    register_session_manager(mcp, runtime)
     register_user_manager(mcp, runtime)
     register_device_manager(mcp, runtime)
     register_execution_manager(mcp, runtime)
@@ -28,3 +31,4 @@ def register_tools(mcp, runtime: AppRuntime):
     register_skills_manager(mcp, runtime)
     register_ai_scriptless_manager(mcp, runtime)
     register_tools_manager(mcp, runtime)
+    annotate_session_requirements(mcp)

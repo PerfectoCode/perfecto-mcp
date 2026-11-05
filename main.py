@@ -156,6 +156,7 @@ def build_mcp_server(
 - **Golden rule**: If you're not 100% certain about something related to Perfecto, consult Skills or Help first, and if you need to search online, prioritize help.perfecto.io.
 
 ## Important Guidelines
+- **Chat session**: Call `perfecto_session` action `get` once at the start of the conversation. Pass the returned `session_id` on every later Perfecto tool call (next to `action`, or inside `args`). Tasks and dataframes belong to that session. If a call returns `SESSION_REQUIRED`, `SESSION_INVALID` or `SESSION_EXPIRED`, get a new session and re-run the calls whose results you still need.
 - **Batch Operations**: When making multiple calls to the same tool, check if that tool supports a `batch` action and use it instead of separate calls.
 - **Large results**: Results that are too large for the conversation are stored as a session dataframe. Use `perfecto_tools` actions `dataframes_list`, `dataframes_get`, `dataframes_schema_groups` and `dataframes_query` to inspect them. Every SQL query must include ORDER BY, LIMIT and OFFSET. Call `dataframes_sql_help` before writing SQL. Remove dataframes with `dataframes_remove` or `dataframes_clear` when finished.
 - **Long-running calls**: If a tool returns a task snapshot instead of the final payload, poll `perfecto_tools` action `tasks_status`, then `tasks_get` for the result. Do not start the same operation again while its task is still working.

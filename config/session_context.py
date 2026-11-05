@@ -1,26 +1,23 @@
-"""Request-scoped identity and session used to partition dataframes and tasks.
+"""Request-scoped identity and chat session used to partition dataframes and tasks.
 
-Perfecto does not ask the model for a separate chat session id. The tool
-entrypoint binds a scope derived from the security token and the MCP session
-before any manager code runs. Storage then reads that scope from these
-context vars.
+The tool entrypoint binds these after the security token is present and, for
+every tool except ``perfecto_session``, after ``session_id`` is an ACTIVE
+session of that caller. Storage reads the scope from these context vars.
 """
 from __future__ import annotations
 
 import contextvars
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Iterator, Optional
+
+from config.session import ChatSession, SessionState
 
 
 @dataclass(frozen=True)
 class Identity:
     user_id: str
-
-
-@dataclass(frozen=True)
-class ChatSession:
-    session_id: str
 
 
 _current_identity: contextvars.ContextVar[Optional[Identity]] = contextvars.ContextVar(
@@ -71,5 +68,13 @@ def bind_session_context(
 @contextmanager
 def bind_call_scope(user_id: str, session_id: str, credential: Optional[str] = None) -> Iterator[None]:
     """Bind the partition key for one Perfecto tool call."""
-    with bind_session_context(Identity(user_id), ChatSession(session_id), credential):
+    now = datetime.now(timezone.utc)
+    session = ChatSession(
+        session_id=session_id,
+        owner_id=user_id,
+        state=SessionState.ACTIVE,
+        created_at=now,
+        last_seen_at=now,
+    )
+    with bind_session_context(Identity(user_id), session, credential):
         yield
