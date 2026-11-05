@@ -1,4 +1,4 @@
-"""Session dataframes, async tasks and the method cache ported from BlazeMeter MCP."""
+"""Session dataframes, async tasks and the method cache."""
 import asyncio
 from types import SimpleNamespace
 

@@ -949,7 +949,7 @@ def get_sql_capabilities() -> Dict[str, Any]:
         "engine_scope": {
             "query_entrypoints": ["SELECT", "WITH"],
             "mode": "read-only",
-            "description": "SQL support is available for SELECT/WITH queries with BlazeMeter MCP query constraints.",
+            "description": "SQL support is available for SELECT/WITH queries with Perfecto MCP query constraints.",
         },
         "allowed_entrypoints": ["SELECT", "WITH"],
         "disallowed_statements": [
@@ -1181,7 +1181,7 @@ def get_sql_capabilities() -> Dict[str, Any]:
         "notes": [
             "All session dataframe tables (loaded from Storage for the current partition) are queryable in the same SQL context.",
             "Function name typo seen in some sources: STRPOST; use STRPOS.",
-            "This help defines practical usage constraints for BlazeMeter MCP SQL queries.",
+            "This help defines practical usage constraints for Perfecto MCP SQL queries.",
         ],
         "references": [
             "https://docs.pola.rs/py-polars/html/reference/sql/index.html",

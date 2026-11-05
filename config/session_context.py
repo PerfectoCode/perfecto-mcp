@@ -3,7 +3,7 @@
 Perfecto does not ask the model for a separate chat session id. The tool
 entrypoint binds a scope derived from the security token and the MCP session
 before any manager code runs. Storage then reads that scope from these
-context vars, the same way the BlazeMeter MCP reads a validated chat session.
+context vars.
 """
 from __future__ import annotations
 
