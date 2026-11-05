@@ -11,6 +11,7 @@ from config.auth import (
 )
 from config.cache import CachePort, build_cache_from_env
 from config.service_auth import service_caller_token
+from config.session import HttpSessionProvider, InMemorySessionProvider, SessionPort
 from config.storage import (
     DefaultSessionScopeResolver,
     HttpSessionStorageProvider,
@@ -69,6 +70,7 @@ class AppRuntime:
     storage: SessionStoragePort
     scope_resolver: SessionScopeResolverPort
     cache: CachePort
+    sessions: SessionPort
 
     def resolve_user_config(self, ctx: Any) -> dict[str, Any]:
         user_config = dict(self.user_config)
@@ -127,7 +129,24 @@ def _storage_base_url() -> str:
     return os.getenv("PERFECTO_STORAGE_API_BASE_URL", "").strip()
 
 
-def _build_storage_and_cache(transport: Transport) -> tuple[SessionStoragePort, CachePort]:
+def _sessions_for(
+        transport: Transport,
+        storage: SessionStoragePort,
+        storage_base_url: str,
+        caller_token: str,
+) -> SessionPort:
+    """
+    Stdio, and HTTP without a storage URL, keep the session registry in this
+    process and drop a purged session's partition. HTTP with a storage URL
+    uses the storage service ``/sessions`` registry.
+    """
+    if transport == "streamable-http" and storage_base_url:
+        return HttpSessionProvider(base_url=storage_base_url, caller_token=caller_token)
+    on_purge = getattr(storage, "discard_session", None)
+    return InMemorySessionProvider(on_purge=on_purge)
+
+
+def _build_storage_and_cache(transport: Transport) -> tuple[SessionStoragePort, CachePort, str, str]:
     """
     Stdio, and HTTP without a storage URL, keep partitions and the method cache
     in this process. HTTP with ``PERFECTO_STORAGE_API_BASE_URL`` uses the shared
@@ -150,10 +169,10 @@ def _build_storage_and_cache(transport: Transport) -> tuple[SessionStoragePort, 
             "streamable-http",
             storage_base_url=storage_base_url,
             caller_token=caller_token,
-        )
+        ), storage_base_url, caller_token
 
     # In-memory cache factory is the stdio path of build_cache_from_env.
-    return InMemorySessionStorageProvider(), build_cache_from_env("stdio")
+    return InMemorySessionStorageProvider(), build_cache_from_env("stdio"), "", ""
 
 
 def build_runtime(
@@ -161,13 +180,16 @@ def build_runtime(
         startup_token: Optional[PerfectoToken] = None,
 ) -> AppRuntime:
     """
-    Compose auth, session storage and the method cache for the selected transport.
+    Compose auth, chat sessions, session storage and the method cache.
 
-    - stdio: process-lifetime ``startup_token`` and in-memory partitions.
-    - streamable-http: request-scoped Bearer auth. Partitions stay in memory
-      unless ``PERFECTO_STORAGE_API_BASE_URL`` points at the storage service.
+    - stdio: process-lifetime ``startup_token``. Sessions and partitions stay
+      in memory. A purged session drops its partition.
+    - streamable-http: request-scoped Bearer auth. Sessions and partitions stay
+      in memory unless ``PERFECTO_STORAGE_API_BASE_URL`` points at the storage
+      service, which then owns ``/sessions`` and ``/session-partitions``.
     """
-    storage, cache = _build_storage_and_cache(transport)
+    storage, cache, storage_base_url, caller_token = _build_storage_and_cache(transport)
+    sessions = _sessions_for(transport, storage, storage_base_url, caller_token)
     if transport == "stdio":
         stdio_user_config = {
             "startup_token": startup_token,
@@ -181,6 +203,7 @@ def build_runtime(
             storage=storage,
             scope_resolver=DefaultSessionScopeResolver(),
             cache=cache,
+            sessions=sessions,
         )
 
     if transport == "streamable-http":
@@ -191,6 +214,7 @@ def build_runtime(
             storage=storage,
             scope_resolver=DefaultSessionScopeResolver(),
             cache=cache,
+            sessions=sessions,
         )
 
     raise ValueError(f"Unknown transport: {transport}")

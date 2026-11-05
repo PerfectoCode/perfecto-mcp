@@ -23,6 +23,7 @@ import httpx
 import pytest
 
 from config.perfecto import SUPPORT_MESSAGE
+from config.call_scope import user_id_for_token
 from models.result import BaseResult
 from tools import ai_scriptless_manager
 from tools.ai_scriptless import definitions
@@ -1846,10 +1847,17 @@ class TestAiScriptlessDispatcher:
         assert "not found in AI Scriptless manager tool" not in (result.error or "")
 
 
-def _call_tool(tool, action, args, ctx=None):
+async def _call_tool(tool, action, args, ctx=None):
     if ctx is None:
-        ctx = make_ctx()
-    return tool(arguments={"action": action, "args": args}, ctx=ctx)
+        ctx = make_ctx(tool._perfecto_token)
+    session = await tool._perfecto_runtime.sessions.open(
+        user_id_for_token(tool._perfecto_token),
+        tool._perfecto_token.token,
+    )
+    payload = {"action": action, "session_id": session.session_id}
+    if args is not None:
+        payload["args"] = args
+    return await tool(arguments=payload, ctx=ctx)
 
 
 def _register_tool(token):
@@ -1864,8 +1872,12 @@ def _register_tool(token):
             return decorator
 
     mcp = _McpStub()
-    ai_scriptless_manager.register(mcp, build_runtime("stdio", startup_token=token))
-    return mcp.tools["perfecto_ai_scriptless"]
+    runtime = build_runtime("stdio", startup_token=token)
+    ai_scriptless_manager.register(mcp, runtime)
+    tool = mcp.tools["perfecto_ai_scriptless"]
+    tool._perfecto_runtime = runtime
+    tool._perfecto_token = token
+    return tool
 
 
 class TestCmdArgumentsValidation:

@@ -100,8 +100,8 @@ class DefaultSessionScopeResolver(SessionScopeResolverPort):
     Resolve the partition from the scope bound for the current tool call.
 
     The tool entrypoint binds a user id (hash of cloud plus security token) and
-    the MCP session id before manager code runs. Outside that call this fails
-    closed instead of writing into a shared partition.
+    the chat session id from ``perfecto_session`` before manager code runs.
+    Outside that call this fails closed instead of writing into a shared partition.
     """
 
     def resolve(self) -> SessionScope:
