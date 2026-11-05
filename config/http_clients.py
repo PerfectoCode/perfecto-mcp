@@ -18,9 +18,8 @@ Reused ``httpx.AsyncClient`` for the clients called on every tool call, so each
 request reuses the connection instead of paying a new TCP/TLS (and HTTP/2)
 handshake. Built on first use, rebuilt if closed, closed on server shutdown.
 
-A shared client serves every caller (hosted: every user), so it never keeps
-cookies: BlazeMeter answers with a ``bzm_sess`` session cookie, and a cookie
-jar would send one user's session with the next user's requests.
+A shared client serves every caller, so it never keeps cookies. A session
+cookie from one caller must not be sent with the next caller's requests.
 """
 import weakref
 from http.cookiejar import CookieJar, DefaultCookiePolicy
