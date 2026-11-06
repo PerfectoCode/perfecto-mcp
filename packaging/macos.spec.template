@@ -1,0 +1,64 @@
+# -*- mode: python ; coding: utf-8 -*-
+# Placeholders ($hiddenimports, $executable_name, $icon, $collect_name,
+# $app_name, $version) are Python expressions substituted by build.py.
+from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+datas = [('pyproject.toml', '.'), ('resources', 'resources')]
+binaries = []
+hiddenimports = [$hiddenimports]
+hiddenimports += collect_submodules('opentelemetry')
+hiddenimports += collect_submodules('uvicorn')
+tmp_ret = collect_all('grpc')
+datas += tmp_ret[0]
+binaries += tmp_ret[1]
+hiddenimports += tmp_ret[2]
+
+a = Analysis(
+    ['main.py'],
+    pathex=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name=$executable_name,
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=True,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=[$icon],
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name=$collect_name,
+)
+app = BUNDLE(
+    coll,
+    name=$app_name,
+    icon=$icon,
+    bundle_identifier='com.perfecto.mcp',
+    version=$version,
+)
