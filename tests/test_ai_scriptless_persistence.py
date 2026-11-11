@@ -25,7 +25,13 @@ import pytest
 from models.result import BaseResult
 from config.token import PerfectoToken
 from tools.ai_scriptless import persistence
-from tools.ai_scriptless.elements import build_branch, build_flow_element, build_logical_step, new_empty_script
+from tools.ai_scriptless.elements import (
+    build_branch,
+    build_flow_element,
+    build_logical_step,
+    build_loop,
+    new_empty_script,
+)
 from tools.ai_scriptless.persistence import load_and_mutate, persist_script
 from tools.ai_scriptless.tree import insert_flow_element
 from tools.ai_scriptless.script import Script
@@ -445,6 +451,35 @@ class TestReadBackAfterSave:
 
         assert persistence.script_fingerprint(served) == persistence.script_fingerprint(sent)
         assert persistence.script_fingerprint(changed) != persistence.script_fingerprint(sent)
+
+    def test_loop_count_read_back_as_a_float_is_the_same_count(self):
+        # The older store gives a loop count of 2 back as 2.0.
+        sent = new_empty_script()
+        sent["flowElements"] = [build_loop(2)]
+        stored = copy.deepcopy(sent)
+        stored["flowElements"][0]["iterator"]["count"] = 2.0
+        other = copy.deepcopy(sent)
+        other["flowElements"][0]["iterator"]["count"] = 2.5
+
+        assert persistence.script_fingerprint(stored) == persistence.script_fingerprint(sent)
+        assert persistence.script_fingerprint(other) != persistence.script_fingerprint(sent)
+
+    def test_loop_saved_on_a_store_that_returns_floats_is_confirmed(self, perfecto_token, monkeypatch):
+        store = self._store(monkeypatch)
+        monkeypatch.setattr(persistence, "CONFIRM_TIMEOUT_SECONDS", 5.0)
+
+        def as_floats(script):
+            for element in script["flowElements"]:
+                iterator = element.get("iterator") or {}
+                if "count" in iterator:
+                    iterator["count"] = float(iterator["count"])
+
+        store.rewrite = as_floats
+
+        result = asyncio.run(load_and_mutate(perfecto_token, ITEM, lambda s: s["flowElements"].append(build_loop(2))))
+
+        assert result.error is None and result.warning is None
+        assert store.reads == 2  # the read to build on, then one read-back
 
     def test_fingerprint_counts_the_test_settings(self):
         sent = new_empty_script()

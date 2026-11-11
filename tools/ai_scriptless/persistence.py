@@ -126,6 +126,10 @@ def _authored(value: Any) -> Any:
         return kept
     if isinstance(value, list):
         return [_authored(item) for item in value]
+    if isinstance(value, float) and value.is_integer():
+        # The older store gives a whole number back as a float (a loop count of 2
+        # reads back as 2.0); the value is the same, so it must compare the same.
+        return int(value)
     return value
 
 
