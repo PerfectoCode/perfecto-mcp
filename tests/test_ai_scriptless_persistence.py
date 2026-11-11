@@ -623,6 +623,19 @@ class TestReviewedReadBack:
         assert "could not be read back to confirm it" in warning
         assert "ConnectError" in warning
 
+    @pytest.mark.parametrize("flag", [True, "true", "True", 1])
+    def test_any_truthy_secured_flag_hides_the_value(self, flag):
+        def with_password(value):
+            script = new_empty_script()
+            script["variables"] = [{"@type": "Variable", "data": {
+                "@type": "StringData", "name": "password", "secured": flag, "value": value}}]
+            return script
+
+        lines = persistence.describe_stored_differences(with_password("sent-cipher"), with_password("stored-cipher"))
+
+        assert lines and "<secured>" in lines[0]
+        assert "sent-cipher" not in lines[0] and "stored-cipher" not in lines[0]
+
     def test_secured_values_are_not_shown_in_the_warning(self, perfecto_token, monkeypatch):
         store = self._store(monkeypatch)
 

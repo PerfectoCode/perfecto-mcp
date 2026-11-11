@@ -165,7 +165,9 @@ SECURED_SHOWN = "<secured>"
 
 def _is_secured(value: Any) -> bool:
     if isinstance(value, dict):
-        return value.get("secured") is True or any(_is_secured(item) for item in value.values())
+        # Any truthy flag counts ("true", 1), the way the other formatters read it:
+        # hiding a value by mistake costs less than showing a secured one.
+        return bool(value.get("secured")) or any(_is_secured(item) for item in value.values())
     if isinstance(value, list):
         return any(_is_secured(item) for item in value)
     return False
