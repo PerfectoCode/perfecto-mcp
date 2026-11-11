@@ -138,10 +138,10 @@ class TestLoadAndMutate:
         script = new_empty_script()
         persisted: dict = {}
 
-        async def fake_fetch(_token, _test_id):
+        async def fake_fetch(_token, _test_id, _endpoints=None):
             return BaseResult(result={"script": script})
 
-        async def fake_persist(_token, item_key, mutated_script, saved_script, snapshot_comment=None):
+        async def fake_persist(_token, item_key, mutated_script, saved_script, snapshot_comment=None, _endpoints=None):
             persisted["item_key"] = item_key
             persisted["flow_count"] = len(mutated_script.get("flowElements", []))
             persisted["saved_count"] = len(saved_script.get("flowElements", []))
@@ -177,10 +177,10 @@ class TestLoadAndMutate:
         }]
         persisted: dict = {}
 
-        async def fake_fetch(_token, _test_id):
+        async def fake_fetch(_token, _test_id, _endpoints=None):
             return BaseResult(result={"script": api_script})
 
-        async def fake_persist(_token, item_key, mutated_script, saved_script, snapshot_comment=None):
+        async def fake_persist(_token, item_key, mutated_script, saved_script, snapshot_comment=None, _endpoints=None):
             persisted["mutated"] = mutated_script
             return BaseResult(result={"status": "ok"})
 
@@ -204,7 +204,7 @@ class TestLoadAndMutate:
         assert len(condition["thenClause"]["flowElements"]) == 1
 
     def test_load_and_mutate_returns_validation_error(self, perfecto_token, monkeypatch):
-        async def fake_fetch(_token, _test_id):
+        async def fake_fetch(_token, _test_id, _endpoints=None):
             return BaseResult(result={"script": new_empty_script()})
 
         monkeypatch.setattr(persistence, "fetch_script_payload", fake_fetch)
@@ -219,7 +219,7 @@ class TestLoadAndMutate:
         assert result.error == "step_path not found: 9"
 
     def test_load_and_mutate_propagates_fetch_error(self, perfecto_token, monkeypatch):
-        async def fake_fetch(_token, _test_id):
+        async def fake_fetch(_token, _test_id, _endpoints=None):
             return BaseResult(error="not found")
 
         monkeypatch.setattr(persistence, "fetch_script_payload", fake_fetch)
@@ -236,10 +236,10 @@ class TestLoadAndMutateAsyncMutator:
 
     @staticmethod
     def _mock_script_io(monkeypatch, persisted: dict):
-        async def fake_fetch(_token, _test_id):
+        async def fake_fetch(_token, _test_id, _endpoints=None):
             return BaseResult(result={"script": new_empty_script()})
 
-        async def fake_persist(_token, item_key, mutated_script, saved_script, snapshot_comment=None):
+        async def fake_persist(_token, item_key, mutated_script, saved_script, snapshot_comment=None, _endpoints=None):
             persisted["item_key"] = item_key
             persisted["flow_count"] = len(mutated_script.get("flowElements", []))
             return BaseResult(result={"status": "ok"})

@@ -21,7 +21,7 @@ import pytest
 from config.auth import PERFECTO_USER_CONFIG_STATE_ATTR
 from config.token import PerfectoToken
 from models.result import BaseResult
-from tools.ai_scriptless import definitions, persistence
+from tools.ai_scriptless import definitions, endpoints, persistence
 
 
 @pytest.fixture
@@ -73,6 +73,19 @@ def offline_lock_owner(monkeypatch):
 
     monkeypatch.setattr(persistence, "script_lock_owner", owner)
     monkeypatch.setattr(ai_scriptless_manager, "script_lock_owner", owner)
+
+
+@pytest.fixture(autouse=True)
+def offline_scriptless_settings(monkeypatch):
+    """Answer the feature settings lookup that picks the script store, as beta does (both on).
+
+    Tests of the older store, and of the lookup itself, set their own; the real lookup
+    is kept as endpoints.read_scriptless_settings before this runs.
+    """
+    async def both_on(_token):
+        return True, True
+
+    monkeypatch.setattr(endpoints, "read_scriptless_settings", both_on)
 
 
 @pytest.fixture
