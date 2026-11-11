@@ -69,11 +69,12 @@ async def script_write_lock(cloud_name: str, owner: str, item_key: str):
     """Serialize writes to one user's script in this process; the entry lives only while in use.
 
     ``owner`` comes from script_lock_owner. One item key can exist on several clouds,
-    so the cloud is part of the key. With several server instances this does not
-    coordinate between them; a shared lock service would take its place behind this
-    same call.
+    so the cloud is part of the key, in lower case: it is a host name, and the header
+    that brings it keeps whatever case the client sent. With several server instances
+    this does not coordinate between them; a shared lock service would take its place
+    behind this same call.
     """
-    key = (str(cloud_name), owner, item_key)
+    key = (str(cloud_name).lower(), owner, item_key)
     async with _script_write_locks_guard:
         held = _script_write_locks.setdefault(key, _ScriptLock())
         held.users += 1
@@ -93,6 +94,8 @@ async def script_write_lock(cloud_name: str, owner: str, item_key: str):
 # change from starting on such a read. Nothing is kept between requests.
 CONFIRM_TIMEOUT_SECONDS = 6.0
 CONFIRM_EVERY_SECONDS = 1.0
+# The least time one read-back gets, so the last one near the deadline can still answer.
+CONFIRM_READ_MIN_SECONDS = 2.0
 _SERVICE_KEYS = frozenset({"uuid", "empty", "numOfFlowElements"})
 
 
@@ -217,9 +220,10 @@ def _step_differences(sent: list, stored: list, prefix: str, lines: list[str]) -
 
 def _named(entries: Any) -> dict[str, Any]:
     named = {}
-    for entry in entries or []:
+    for index, entry in enumerate(entries or []):
         name = (entry.get("data") or {}).get("name") if isinstance(entry, dict) else None
-        named[name or _short(entry)] = entry
+        # An entry without a name goes by its position: its content may hold a secured value.
+        named[name or f"#{index}"] = entry
     return named
 
 
@@ -271,23 +275,34 @@ async def _confirm_save(
     deadline = time.monotonic() + CONFIRM_TIMEOUT_SECONDS
     read_any, last_failure = False, None
     while True:
-        stored = None
+        stored, stored_print = None, None
         try:
-            payload = await fetch_script_payload(token, item_key, endpoints)
+            # A read that stalls must not hold the lock long past the confirmation budget.
+            payload = await asyncio.wait_for(
+                fetch_script_payload(token, item_key, endpoints),
+                timeout=max(deadline - time.monotonic(), CONFIRM_READ_MIN_SECONDS),
+            )
         except Exception as exc:
-            payload, last_failure = None, f"{type(exc).__name__}: {exc}"
+            payload, last_failure = None, f"{type(exc).__name__}: {exc or 'no answer in time'}"
         if payload is not None and payload.error:
             last_failure = str(payload.error)
-        elif payload is not None and isinstance(payload.result, dict):
-            read_any = True
-            stored = payload.result.get("script", {})
-            if script_fingerprint(stored) == sent_print:
-                return None
+        elif payload is not None:
+            script = payload.result.get("script") if isinstance(payload.result, dict) else None
+            try:
+                stored_print = script_fingerprint(script) if isinstance(script, dict) else None
+            except Exception as exc:
+                last_failure = f"unreadable script: {type(exc).__name__}: {exc}"
+            if stored_print is None:
+                last_failure = last_failure or "the answer held no script"
+            else:
+                read_any, stored = True, script
+                if stored_print == sent_print:
+                    return None
         if time.monotonic() >= deadline:
             # Neither the version before the save nor what was sent: the service applied
             # the save and stored something else. Only the last read counts, so a version
             # caught in passing while the save was still showing is not reported.
-            if stored is not None and before_print is not None and script_fingerprint(stored) != before_print:
+            if stored is not None and before_print is not None and stored_print != before_print:
                 return _stored_differently(sent, stored)
             if not read_any:
                 return (

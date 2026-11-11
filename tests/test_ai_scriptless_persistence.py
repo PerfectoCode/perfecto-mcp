@@ -613,6 +613,62 @@ class TestReviewedReadBack:
         assert "stored something different" not in warning
 
 
+class TestSecondReviewReadBack:
+    """Read-back cases raised in the second review of the save confirmation."""
+
+    @staticmethod
+    def _answering(monkeypatch, read):
+        async def fake_api_request(_token, method, endpoint=None, **_kwargs):
+            if method == "GET":
+                return await read()
+            if "script-draft-repository" in endpoint:
+                return BaseResult(result={"key": "draft-1"})
+            return BaseResult(result={"status": "success"})
+
+        monkeypatch.setattr(persistence, "api_request", fake_api_request)
+
+    def test_stalled_read_back_is_cut_at_the_deadline(self, perfecto_token, monkeypatch):
+        async def stall():
+            await asyncio.sleep(3600)
+
+        self._answering(monkeypatch, stall)
+        monkeypatch.setattr(persistence, "CONFIRM_TIMEOUT_SECONDS", 0.2)
+        monkeypatch.setattr(persistence, "CONFIRM_READ_MIN_SECONDS", 0.1)
+
+        async def timed():
+            started = asyncio.get_running_loop().time()
+            result = await persist_script(perfecto_token, ITEM, _texts_script("created"))
+            return result, asyncio.get_running_loop().time() - started
+
+        result, seconds = asyncio.run(timed())
+
+        assert result.error is None
+        assert "could not be read back to confirm it (TimeoutError" in " ".join(result.warning)
+        assert seconds < 2
+
+    def test_answer_without_a_script_is_a_warning_not_an_exception(self, perfecto_token, monkeypatch):
+        async def no_script():
+            return BaseResult(result={"script": None})
+
+        self._answering(monkeypatch, no_script)
+
+        result = asyncio.run(persist_script(perfecto_token, ITEM, _texts_script("created")))
+
+        assert result.error is None
+        assert "the answer held no script" in " ".join(result.warning)
+
+    def test_unnamed_secured_entry_does_not_show_its_value(self):
+        sent = new_empty_script()
+        stored = new_empty_script()
+        stored["variables"] = [{"@type": "Variable", "data": {"@type": "StringData", "secured": True,
+                                                              "value": "secret-cipher"}}]
+
+        lines = persistence.describe_stored_differences(sent, stored)
+
+        assert lines and lines[0].startswith("variable #0:")
+        assert "secret-cipher" not in " ".join(lines)
+
+
 def _texts_script(*texts: str) -> dict:
     script = new_empty_script()
     script["flowElements"] = [build_flow_element("comment", {"text": text}) for text in texts]
@@ -660,6 +716,10 @@ class TestScriptWriteLock:
 
     def test_same_user_on_another_cloud_does_not_wait(self):
         assert asyncio.run(self._second_waits(self.ALICE, self.ALICE_ELSEWHERE)) is False
+        assert persistence._script_write_locks == {}
+
+    def test_cloud_names_differing_in_case_share_one_lock(self):
+        assert asyncio.run(self._second_waits(("Cloud-One", "alice-owner"), ("cloud-one", "alice-owner"))) is True
         assert persistence._script_write_locks == {}
 
     def test_entry_is_removed_after_release_even_on_error(self):
