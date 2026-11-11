@@ -1366,6 +1366,7 @@ class TestRepositoryOperations:
 
         async def fake_api_request(_token, method, endpoint=None, **kwargs):
             captured["method"] = method
+            captured["endpoint"] = endpoint
             captured["params"] = kwargs.get("params")
             return BaseResult(result={"status": "deleted"})
 
@@ -1376,6 +1377,11 @@ class TestRepositoryOperations:
 
         assert result.error is None
         assert captured["method"] == "DELETE"
+        # The settings fixture picks the newer store, which deletes through the script resource.
+        assert captured["endpoint"] == (
+            "https://demo.perfectomobile.com/scriptless-mobile-engine/script-asset-manager/api"
+            "/script-repository/script"
+        )
         assert captured["params"]["itemKey"] == TEST_ID
 
     def test_delete_test_propagates_api_error(self, perfecto_token, monkeypatch):
