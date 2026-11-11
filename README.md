@@ -174,6 +174,30 @@ environment variables.
 
 ---
 
+## Confirmation
+
+Mutating tools can ask the MCP client to confirm before they run, using [elicitation](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation). The server decides which operations prompt based on `--confirm`.
+
+| Mode | Behavior |
+|------|----------|
+| `DELETE` | Confirm delete operations only (default) |
+| `CUD` | Confirm create, update, and delete operations |
+| `DISABLE` | No confirmation. An agent can run critical operations without human approval |
+
+```bash
+perfecto-mcp --mcp --confirm CUD
+```
+
+Add the flag to the MCP client `args` the same way, after `--mcp`. For Docker, pass it with the transport so it replaces the image command correctly:
+
+```bash
+docker run --rm -i -e PERFECTO_CLOUD_NAME=your_cloud_name -e PERFECTO_SECURITY_TOKEN=your_security_token ghcr.io/perfectocode/perfecto-mcp:latest --mcp --confirm CUD
+```
+
+Delete operations are `delete_test`, `delete_command`, and `delete_test_variable`. Create covers new tests, steps, variables, copies (`save_test_as`), and `execute_test`. Update covers edits, moves, saves, and `stop_live_executions`. Reads and lists are never confirmed. If the user declines, or the client cannot show the prompt, the operation does not run.
+
+---
+
 ## OpenTelemetry
 
 Perfecto MCP reports traces and metrics for MCP tool calls using [OpenTelemetry](https://opentelemetry.io/). This gives you visibility into which tools are used, how long they take, and when errors occur.

@@ -64,7 +64,13 @@ from tools.ai_scriptless_script import (
 )
 from tools.ai_scriptless.definitions import SUPPORTED_ERROR_POLICIES
 from tools.ai_scriptless.endpoints import script_endpoints
-from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
+from tools.utils import (
+    Operations,
+    api_request,
+    format_sanitized_traceback,
+    normalize_action_args,
+    require_confirmation,
+)
 
 STEP_PATH_REFRESH_NOTES = [
     "step_path values are dot-separated positional paths (e.g. 0, 2.0, 5.b0.1); Perfecto does not persist them.",
@@ -380,6 +386,7 @@ class AiScriptlessManager(Manager):
     )
 
     @token_verify
+    @require_confirmation(operation=Operations.CREATE)
     async def execute_test(
             self,
             test_id: str,
@@ -487,6 +494,7 @@ class AiScriptlessManager(Manager):
         return _append_ui_access_info(BaseResult(result=detail), self.token.cloud_name, test_id)
 
     @token_verify
+    @require_confirmation(operation=Operations.CREATE)
     async def add_command(
             self,
             test_id: str,
@@ -533,6 +541,7 @@ class AiScriptlessManager(Manager):
         return _append_step_path_refresh_notes(result)
 
     @token_verify
+    @require_confirmation(operation=Operations.UPDATE)
     async def modify_command(self, test_id: str, step_path: str, cmd_arguments: dict[str, Any]) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
@@ -569,6 +578,7 @@ class AiScriptlessManager(Manager):
         return _append_step_path_refresh_notes(result)
 
     @token_verify
+    @require_confirmation(operation=Operations.DELETE)
     async def delete_command(self, test_id: str, step_path: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
@@ -583,6 +593,7 @@ class AiScriptlessManager(Manager):
         )
 
     @token_verify
+    @require_confirmation(operation=Operations.UPDATE)
     async def set_command_enabled(self, test_id: str, step_path: str, enabled: bool) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
@@ -600,6 +611,7 @@ class AiScriptlessManager(Manager):
         return _append_step_path_refresh_notes(result)
 
     @token_verify
+    @require_confirmation(operation=Operations.UPDATE)
     async def save_test(self, test_id: str, comment: Optional[str] = None) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
@@ -615,6 +627,7 @@ class AiScriptlessManager(Manager):
         )
 
     @token_verify
+    @require_confirmation(operation=Operations.CREATE)
     async def create_test(self, name: str, folder: str = "My Folder", visibility: str = "PRIVATE") -> BaseResult:
         if not name:
             return BaseResult(error="name is required")
@@ -624,6 +637,7 @@ class AiScriptlessManager(Manager):
         return _append_ui_access_info(result, self.token.cloud_name, item_key)
 
     @token_verify
+    @require_confirmation(operation=Operations.CREATE)
     async def save_test_as(
             self,
             test_id: str,
@@ -664,6 +678,7 @@ class AiScriptlessManager(Manager):
         return _append_step_path_refresh_notes(result)
 
     @token_verify
+    @require_confirmation(operation=Operations.CREATE)
     async def add_logical_step(
             self,
             test_id: str,
@@ -677,6 +692,7 @@ class AiScriptlessManager(Manager):
         return await self._add_structure(test_id, element, "LogicalStep", after_path, parent_path)
 
     @token_verify
+    @require_confirmation(operation=Operations.CREATE)
     async def add_loop(
             self,
             test_id: str,
@@ -723,6 +739,7 @@ class AiScriptlessManager(Manager):
         return result
 
     @token_verify
+    @require_confirmation(operation=Operations.CREATE)
     async def add_condition(
             self,
             test_id: str,
@@ -742,6 +759,7 @@ class AiScriptlessManager(Manager):
         return result
 
     @token_verify
+    @require_confirmation(operation=Operations.UPDATE)
     async def set_command_error_policy(self, test_id: str, step_path: str, error_policy: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")
@@ -772,6 +790,7 @@ class AiScriptlessManager(Manager):
         return _append_step_path_refresh_notes(result)
 
     @token_verify
+    @require_confirmation(operation=Operations.UPDATE)
     async def move_command(
             self,
             test_id: str,
@@ -796,6 +815,7 @@ class AiScriptlessManager(Manager):
         return _append_step_path_refresh_notes(result)
 
     @token_verify
+    @require_confirmation(operation=Operations.DELETE)
     async def delete_test(self, test_id: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
@@ -808,6 +828,7 @@ class AiScriptlessManager(Manager):
         )
 
     @token_verify
+    @require_confirmation(operation=Operations.UPDATE)
     async def move_test(
             self,
             test_id: str,
@@ -893,6 +914,7 @@ class AiScriptlessManager(Manager):
         return BaseResult(result=variables)
 
     @token_verify
+    @require_confirmation(operation=Operations.CREATE)
     async def add_test_variable(
             self,
             test_id: str,
@@ -944,6 +966,7 @@ class AiScriptlessManager(Manager):
         return BaseResult(result=ciphertext)
 
     @token_verify
+    @require_confirmation(operation=Operations.UPDATE)
     async def modify_test_variable(
             self,
             test_id: str,
@@ -976,6 +999,7 @@ class AiScriptlessManager(Manager):
         return result
 
     @token_verify
+    @require_confirmation(operation=Operations.DELETE)
     async def delete_test_variable(self, test_id: str, name: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required")

@@ -13,7 +13,13 @@ from formatters.execution import format_executions
 from models.manager import Manager
 from models.result import BaseResult, PaginationResult
 from telemetry import run_tool
-from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
+from tools.utils import (
+    Operations,
+    api_request,
+    format_sanitized_traceback,
+    normalize_action_args,
+    require_confirmation,
+)
 
 
 class ExecutionManager(Manager):
@@ -59,6 +65,7 @@ class ExecutionManager(Manager):
         return await api_request(self.token, "POST", endpoint=execution_management_url)
 
     @token_verify
+    @require_confirmation(operation=Operations.UPDATE)
     async def stop_live_executions(self, execution_id_list: list[str]) -> BaseResult:
         execution_management_url = perfecto.get_execution_management_api_url(self.token.cloud_name)
         execution_management_url = execution_management_url + "/stop"
