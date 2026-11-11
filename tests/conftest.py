@@ -74,7 +74,7 @@ def offline_lock_owner(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def offline_scriptless_settings(monkeypatch):
-    """Answer the feature settings lookup that picks the script store, as beta does (both on).
+    """Answer the feature settings lookup that picks the script store with both settings on (the newer store).
 
     Tests of the older store, and of the lookup itself, set their own; the real lookup
     is kept as endpoints.read_scriptless_settings before this runs.

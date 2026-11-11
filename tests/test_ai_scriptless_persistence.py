@@ -282,7 +282,7 @@ ITEM = "PRIVATE:Folder/Test.xml"
 
 
 class _FakeStore:
-    """Keeps every save as a version and serves one, misbehaving the ways beta did."""
+    """Keeps every save as a version and serves one, misbehaving the ways the service was seen to."""
 
     def __init__(self):
         self.versions: list[dict] = [self._as_served(new_empty_script())]
@@ -291,7 +291,7 @@ class _FakeStore:
         self.lag_after_save = 0  # how many reads lag after each kept save
         self.drop_next = False  # the next save answers success and keeps nothing
         self.refuse = False     # saves answer HTTP 400
-        self.rewrite = None     # applied to what is kept, the way beta drops or converts content
+        self.rewrite = None     # applied to what is kept, the way the service drops or converts content
         self.failing_reads = 0  # the next reads raise, as a transport error would
         self.sent: list[dict] = []
         self.reads = 0
@@ -351,7 +351,7 @@ def _texts(script: dict) -> list[str]:
 
 
 class TestReadBackAfterSave:
-    """A read right after a save can return the version from before it (seen on beta)."""
+    """A read right after a save can return the version from before it (seen on the service)."""
 
     @staticmethod
     def _store(monkeypatch) -> _FakeStore:
@@ -433,19 +433,53 @@ class TestReadBackAfterSave:
         assert result.error == "HTTP 400: Something went wrong."
 
     def test_fingerprint_ignores_what_the_service_adds(self):
+        # What the service added or changed on a save of a new test.
         sent = new_empty_script()
         sent["flowElements"] = [build_flow_element("comment", {"text": "x"})]
         served = _FakeStore._as_served(sent)
-        served["info"] = {"@type": "ScriptInfo", "modelVersion": "2.0"}
-        served["numOfFlowElements"] = 1
+        served.update({"uuid": "server-script", "numOfFlowElements": 1, "active": True,
+                       "comment": None, "status": None})
         changed = copy.deepcopy(sent)
         changed["flowElements"].append(build_flow_element("comment", {"text": "y"}))
 
         assert persistence.script_fingerprint(served) == persistence.script_fingerprint(sent)
         assert persistence.script_fingerprint(changed) != persistence.script_fingerprint(sent)
 
+    def test_fingerprint_counts_the_test_settings(self):
+        sent = new_empty_script()
+        other_options, other_info = copy.deepcopy(sent), copy.deepcopy(sent)
+        other_options["options"]["automaticAllocation"] = False
+        other_info["info"]["description"] = "another"
+
+        assert persistence.script_fingerprint(other_options) != persistence.script_fingerprint(sent)
+        assert persistence.script_fingerprint(other_info) != persistence.script_fingerprint(sent)
+
+    def test_copy_is_not_confirmed_by_a_target_still_showing_its_old_settings(self, perfecto_token, monkeypatch):
+        # The target already holds the same steps with other settings; reads lag behind the copy.
+        store = _FakeStore()
+        monkeypatch.setattr(persistence, "api_request", store.api_request)
+        source = _texts_script("same")
+        source["options"]["automaticAllocation"] = False
+        old_target = _texts_script("same")
+        store.edit_elsewhere(old_target)
+        store.lag_after_save = 99
+
+        result = asyncio.run(persist_script(perfecto_token, ITEM, source))
+
+        assert "did not show the change" in " ".join(result.warning)
+
+    def test_settings_stored_differently_are_named(self):
+        sent = new_empty_script()
+        stored = copy.deepcopy(sent)
+        stored["options"]["automaticAllocation"] = False
+
+        lines = persistence.describe_stored_differences(sent, stored)
+
+        assert lines == ['options: sent {"@type": "ScriptOptions", "automaticAllocation": true}, '
+                         'stored {"@type": "ScriptOptions", "automaticAllocation": false}']
+
     def test_content_stored_differently_is_named_in_the_warning(self, perfecto_token, monkeypatch):
-        # Measured on beta: a field the service does not know is dropped, a number
+        # Measured on the service: a field it does not know is dropped, a number
         # where it expects text is converted, and the save still answers success.
         store = self._store(monkeypatch)
 

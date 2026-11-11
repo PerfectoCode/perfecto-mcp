@@ -114,14 +114,25 @@ def _authored(value: Any) -> Any:
     return value
 
 
+# What a save writes and the service gives back as sent (measured: info and
+# options come back unchanged). The rest of the script is the service's own: uuid,
+# empty and numOfFlowElements change on every save, and active, comment and status
+# are added when a test is created.
+AUTHORED_SECTIONS = ("parameters", "variables", "flowElements", "info", "options")
+
+
 def _authored_content(script: ScriptInput) -> dict[str, Any]:
     authored = copy.deepcopy(coerce_script_dict(script))
     normalize_if_statement_aliases(authored)
-    return _authored({key: authored.get(key) for key in ("parameters", "variables", "flowElements")})
+    return _authored({key: authored.get(key) for key in AUTHORED_SECTIONS})
 
 
 def script_fingerprint(script: ScriptInput) -> str:
-    """Steps, variables and parameters, without the fields the service adds or derives."""
+    """Steps, variables, parameters and the test's settings, without what the service adds or derives.
+
+    The settings (info, options) count too: a read that still shows a target's old
+    settings must not pass for a copy that changed them.
+    """
     return json.dumps(_authored_content(script), sort_keys=True, separators=(",", ":"), default=str)
 
 
@@ -255,6 +266,9 @@ def describe_stored_differences(sent: ScriptInput, stored: ScriptInput) -> list[
                 f"{section} order: sent {_short(list(sent_named))}, stored {_short(list(stored_named))}"
             ]
         lines.extend(named_differences)
+    for section in ("info", "options"):
+        if one.get(section) != two.get(section):
+            lines.append(f"{section}: {_sent_stored(one.get(section), two.get(section))}")
     return lines
 
 
