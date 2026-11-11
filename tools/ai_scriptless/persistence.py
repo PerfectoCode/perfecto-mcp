@@ -4,7 +4,7 @@ import hashlib
 import inspect
 import json
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from urllib.parse import quote
@@ -433,20 +433,65 @@ async def persist_script(
     async with script_write_lock(token.cloud_name, owner.result, item_key):
         # Read once: the save and the read-back go to the same service.
         endpoints = await script_endpoints(token)
-        result = await _persist_script(
-            token,
-            item_key,
-            script,
-            saved_script,
-            snapshot_comment,
-            endpoints,
-        )
-        if result.error:
-            return result
-        unconfirmed = await _confirm_save(token, item_key, script, saved_script, endpoints)
-        if unconfirmed:
-            result.append_warnings([unconfirmed])
+        return await _save_and_confirm(token, item_key, script, saved_script, snapshot_comment, endpoints)
+
+
+async def _save_and_confirm(
+        token: PerfectoToken,
+        item_key: str,
+        script: ScriptInput,
+        saved_script: Optional[ScriptInput],
+        snapshot_comment: Optional[str],
+        endpoints: ScriptEndpoints,
+) -> BaseResult:
+    """Save and read back; the caller holds the script's lock."""
+    result = await _persist_script(
+        token,
+        item_key,
+        script,
+        saved_script,
+        snapshot_comment,
+        endpoints,
+    )
+    if result.error:
         return result
+    unconfirmed = await _confirm_save(token, item_key, script, saved_script, endpoints)
+    if unconfirmed:
+        result.append_warnings([unconfirmed])
+    return result
+
+
+async def copy_script(
+        token: PerfectoToken,
+        source_key: str,
+        target_key: str,
+        snapshot_comment: Optional[str] = None,
+) -> BaseResult:
+    """Save one script under another key (UI: Save as).
+
+    Both locks are held from the read of the source to the read-back of the copy, so
+    a change to either script cannot land in between and be overwritten, and the
+    settings are read once, so the copy is read from and written to the same service.
+    """
+    owners = {}
+    for key in (source_key, target_key):
+        owner = await script_lock_owner(token, key)
+        if owner.error:
+            return owner
+        owners[key] = owner.result
+    async with AsyncExitStack() as held:
+        # A fixed order, so two copies running opposite ways cannot wait on each other.
+        for key in sorted(owners):
+            await held.enter_async_context(script_write_lock(token.cloud_name, owners[key], key))
+        endpoints = await script_endpoints(token)
+        payload_result = await fetch_script_payload(token, source_key, endpoints)
+        if payload_result.error:
+            return payload_result
+        payload = payload_result.result if isinstance(payload_result.result, dict) else {}
+        script = copy.deepcopy(payload.get("script", {}))
+        # Onto its own key the version being replaced is known; onto another it is not.
+        replaced = copy.deepcopy(script) if target_key == source_key else None
+        return await _save_and_confirm(token, target_key, script, replaced, snapshot_comment, endpoints)
 
 
 async def load_and_mutate(

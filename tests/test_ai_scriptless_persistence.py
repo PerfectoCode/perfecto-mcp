@@ -724,6 +724,84 @@ class TestThirdReviewReadBack:
         assert "the comparison could not name where" in " ".join(result.warning)
 
 
+class TestCopyScript:
+    """Save as: both locks and one service from reading the source to reading back the copy."""
+
+    OTHER = "PRIVATE:Folder/Copy.xml"
+
+    def test_both_locks_are_held_while_the_copy_is_saved(self, perfecto_token, monkeypatch):
+        store = _FakeStore()
+        store.edit_elsewhere(_texts_script("original"))
+        held_during_save = []
+
+        async def recording(token, method, endpoint=None, **kwargs):
+            if method == "POST" and "script-repository/script" in endpoint:
+                held_during_save.append(sorted(key[2] for key in persistence._script_write_locks))
+            return await store.api_request(token, method, endpoint, **kwargs)
+
+        monkeypatch.setattr(persistence, "api_request", recording)
+
+        result = asyncio.run(persistence.copy_script(perfecto_token, ITEM, self.OTHER))
+
+        assert result.error is None
+        assert held_during_save == [sorted([ITEM, self.OTHER])]
+        assert _texts(store.sent[-1]) == ["original"]
+        assert persistence._script_write_locks == {}
+
+    def test_a_change_to_the_same_key_waits_for_the_copy(self, perfecto_token, monkeypatch):
+        store = _FakeStore()
+        store.edit_elsewhere(_texts_script("original"))
+        monkeypatch.setattr(persistence, "api_request", store.api_request)
+
+        async def both():
+            copying = asyncio.create_task(persistence.copy_script(perfecto_token, ITEM, ITEM))
+            await asyncio.sleep(0)
+            await load_and_mutate(perfecto_token, ITEM, _adding("after"))
+            await copying
+
+        asyncio.run(both())
+
+        assert _texts(store.sent[-1]) == ["original", "after"]
+
+    def test_settings_are_read_once_for_the_whole_copy(self, perfecto_token, monkeypatch):
+        from tools.ai_scriptless import endpoints
+
+        answers = iter([(True, True), (False, False), (False, False)])
+
+        async def changing(_token):
+            return next(answers)
+
+        store = _FakeStore()
+        store.edit_elsewhere(_texts_script("original"))
+        seen = []
+
+        async def recording(token, method, endpoint=None, **kwargs):
+            seen.append(endpoint)
+            return await store.api_request(token, method, endpoint, **kwargs)
+
+        monkeypatch.setattr(endpoints, "read_scriptless_settings", changing)
+        monkeypatch.setattr(persistence, "api_request", recording)
+
+        asyncio.run(persistence.copy_script(perfecto_token, ITEM, self.OTHER))
+
+        assert seen and all("script-asset-manager" in endpoint for endpoint in seen)
+
+    def test_copies_running_opposite_ways_do_not_wait_on_each_other(self, perfecto_token, monkeypatch):
+        store = _FakeStore()
+        store.edit_elsewhere(_texts_script("original"))
+        monkeypatch.setattr(persistence, "api_request", store.api_request)
+
+        async def both():
+            await asyncio.wait_for(asyncio.gather(
+                persistence.copy_script(perfecto_token, ITEM, self.OTHER),
+                persistence.copy_script(perfecto_token, self.OTHER, ITEM),
+            ), timeout=2)
+
+        asyncio.run(both())
+
+        assert persistence._script_write_locks == {}
+
+
 def _texts_script(*texts: str) -> dict:
     script = new_empty_script()
     script["flowElements"] = [build_flow_element("comment", {"text": text}) for text in texts]

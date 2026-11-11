@@ -66,13 +66,10 @@ def offline_lock_owner(monkeypatch):
     The fakes in the suite serve scripts, not users. Tests of the lookup itself
     call the real one, kept as persistence.script_lock_owner before this runs.
     """
-    from tools import ai_scriptless_manager
-
     async def owner(_token, _item_key):
         return BaseResult(result="test-user")
 
     monkeypatch.setattr(persistence, "script_lock_owner", owner)
-    monkeypatch.setattr(ai_scriptless_manager, "script_lock_owner", owner)
 
 
 @pytest.fixture(autouse=True)

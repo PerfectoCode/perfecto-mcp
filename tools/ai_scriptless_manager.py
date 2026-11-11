@@ -50,8 +50,7 @@ from tools.ai_scriptless_script import (
     new_empty_script,
     normalize_if_statement_aliases,
     persist_script,
-    script_lock_owner,
-    script_write_lock,
+    copy_script,
     find_condition_statement,
     set_element_error_policy,
     set_element_enabled,
@@ -637,17 +636,9 @@ class AiScriptlessManager(Manager):
             return BaseResult(error="test_id is required")
         if not name:
             return BaseResult(error="name is required")
-        owner = await script_lock_owner(self.token, test_id)
-        if owner.error:
-            return owner
-        async with script_write_lock(self.token.cloud_name, owner.result, test_id):
-            payload_result = await fetch_script_payload(self.token, test_id)
-            if payload_result.error:
-                return payload_result
-            script = payload_result.result.get("script", {})
         item_key = build_item_key(visibility, folder, name)
         result = _append_step_path_refresh_notes(
-            await persist_script(self.token, item_key, script, snapshot_comment=comment)
+            await copy_script(self.token, test_id, item_key, snapshot_comment=comment)
         )
         return _append_ui_access_info(result, self.token.cloud_name, item_key)
 
