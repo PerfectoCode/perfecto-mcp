@@ -50,7 +50,7 @@ from tools.ai_scriptless_script import (
     new_empty_script,
     normalize_if_statement_aliases,
     persist_script,
-    script_write_lock,
+    copy_script,
     find_condition_statement,
     set_element_error_policy,
     set_element_enabled,
@@ -63,6 +63,7 @@ from tools.ai_scriptless_script import (
     validate_variable_bindings,
 )
 from tools.ai_scriptless.definitions import SUPPORTED_ERROR_POLICIES
+from tools.ai_scriptless.endpoints import script_endpoints
 from tools.utils import api_request, format_sanitized_traceback, normalize_action_args
 
 STEP_PATH_REFRESH_NOTES = [
@@ -137,8 +138,7 @@ class AiScriptlessManager(Manager):
         page_index = args.get("page_index", 1)
         skip = (page_size * page_index) - page_size
 
-        tree_url = perfecto.get_ai_scriptless_script_asset_api_url(self.token.cloud_name)
-        tree_url = tree_url + "/script-directory-repository/tree"
+        tree_url = (await script_endpoints(self.token)).tree_url
         tests_result = await api_request(self.token, "GET", endpoint=tree_url,
                                          result_formatter=format_ai_scriptless_tests,
                                          result_formatter_params={"page_size": page_size, "skip": skip,
@@ -164,8 +164,7 @@ class AiScriptlessManager(Manager):
 
     @token_verify
     async def list_filter_values(self, filter_names: list[str]) -> BaseResult:
-        tree_url = perfecto.get_ai_scriptless_script_asset_api_url(self.token.cloud_name)
-        tree_url = tree_url + "/script-directory-repository/tree"
+        tree_url = (await script_endpoints(self.token)).tree_url
         filter_values_result = await api_request(self.token, "GET", endpoint=tree_url,
                                                  result_formatter=format_ai_scriptless_tests_filter_values)
         filter_values = {}
@@ -451,8 +450,7 @@ class AiScriptlessManager(Manager):
     async def view_test_structure(self, test_id: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
-        script_url = perfecto.get_ai_scriptless_script_asset_api_url(self.token.cloud_name)
-        script_url = script_url + f"/script-repository/script?itemKey={quote(test_id, safe='')}"
+        script_url = (await script_endpoints(self.token)).script_url + f"?itemKey={quote(test_id, safe='')}"
         result = await api_request(self.token, "GET", endpoint=script_url,
                                  result_formatter=format_test_structure,
                                  result_formatter_params={"item_key": test_id})
@@ -638,14 +636,9 @@ class AiScriptlessManager(Manager):
             return BaseResult(error="test_id is required")
         if not name:
             return BaseResult(error="name is required")
-        async with script_write_lock(test_id):
-            payload_result = await fetch_script_payload(self.token, test_id)
-            if payload_result.error:
-                return payload_result
-            script = payload_result.result.get("script", {})
         item_key = build_item_key(visibility, folder, name)
         result = _append_step_path_refresh_notes(
-            await persist_script(self.token, item_key, script, snapshot_comment=comment)
+            await copy_script(self.token, test_id, item_key, snapshot_comment=comment)
         )
         return _append_ui_access_info(result, self.token.cloud_name, item_key)
 
@@ -806,10 +799,7 @@ class AiScriptlessManager(Manager):
     async def delete_test(self, test_id: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
-        # The asset manager deletes through the script resource itself; the
-        # older native-automation-webapp had a separate /repositories path.
-        delete_url = perfecto.get_ai_scriptless_script_asset_api_url(self.token.cloud_name) \
-            + "/script-repository/script"
+        delete_url = (await script_endpoints(self.token)).delete_url
         return await api_request(
             self.token,
             "DELETE",

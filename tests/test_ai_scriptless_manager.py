@@ -1286,21 +1286,16 @@ class TestRepositoryOperations:
         assert result.error is None
         assert captured["snapshot_comment"] == "checkpoint"
 
-    def test_save_test_as_fetches_and_persists_under_new_key(self, perfecto_token, monkeypatch):
-        source_script = _script_with_steps("wait")
+    def test_save_test_as_copies_under_new_key(self, perfecto_token, monkeypatch):
         persisted: dict = {}
 
-        async def fake_fetch(_token, _test_id):
-            return BaseResult(result={"script": source_script})
-
-        async def fake_persist(_token, item_key, script, saved_script=None, snapshot_comment=None):
-            persisted["item_key"] = item_key
-            persisted["flow_count"] = len(script.get("flowElements", []))
+        async def fake_copy(_token, source_key, target_key, snapshot_comment=None):
+            persisted["source_key"] = source_key
+            persisted["item_key"] = target_key
             persisted["comment"] = snapshot_comment
             return BaseResult(result={"draft_key": "d-2", "status": "ok"})
 
-        monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch)
-        monkeypatch.setattr(ai_scriptless_manager, "persist_script", fake_persist)
+        monkeypatch.setattr(ai_scriptless_manager, "copy_script", fake_copy)
 
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.save_test_as(
@@ -1312,15 +1307,15 @@ class TestRepositoryOperations:
         ))
 
         assert result.error is None
+        assert persisted["source_key"] == TEST_ID
         assert persisted["item_key"] == "PUBLIC:Archive/Copy.xml"
-        assert persisted["flow_count"] == 1
         assert persisted["comment"] == "branched"
 
-    def test_save_test_as_propagates_fetch_error(self, perfecto_token, monkeypatch):
-        async def fake_fetch(_token, _test_id):
+    def test_save_test_as_propagates_copy_error(self, perfecto_token, monkeypatch):
+        async def fake_copy(_token, _source_key, _target_key, snapshot_comment=None):
             return BaseResult(error="source missing")
 
-        monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch)
+        monkeypatch.setattr(ai_scriptless_manager, "copy_script", fake_copy)
 
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.save_test_as(TEST_ID, "Copy"))
@@ -1533,6 +1528,12 @@ def _setup_dispatcher_mocks(monkeypatch, captured: dict | None = None, persisted
             persisted["flow_count"] = len(payload.get("flowElements", []))
         return BaseResult(result={"draft_key": "d-1", "status": "ok"})
 
+    async def fake_copy(_token, _source_key, target_key, snapshot_comment=None):
+        if persisted is not None:
+            persisted["item_key"] = target_key
+            persisted["comment"] = snapshot_comment
+        return BaseResult(result={"draft_key": "d-1", "status": "ok"})
+
     async def fake_load_and_mutate(_token, test_id, mutator, snapshot_comment=None):
         payload = copy.deepcopy(script)
         try:
@@ -1549,6 +1550,7 @@ def _setup_dispatcher_mocks(monkeypatch, captured: dict | None = None, persisted
     monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
     monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch)
     monkeypatch.setattr(ai_scriptless_manager, "persist_script", fake_persist)
+    monkeypatch.setattr(ai_scriptless_manager, "copy_script", fake_copy)
     monkeypatch.setattr(ai_scriptless_manager, "load_and_mutate", fake_load_and_mutate)
 
 

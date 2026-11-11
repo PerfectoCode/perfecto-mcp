@@ -44,9 +44,11 @@ from tools.ai_scriptless.item_key import (
 )
 from tools.ai_scriptless.persistence import (
     _persist_script,
+    copy_script,
     fetch_script_payload,
     load_and_mutate,
     persist_script,
+    script_lock_owner,
     script_write_lock,
 )
 from tools.ai_scriptless.script import Script, ScriptInput, coerce_script_dict
@@ -110,6 +112,7 @@ __all__ = [
     "variable_type_label",
     "VISIBILITY_UI_ROOT",
     "_persist_script",
+    "copy_script",
     "add_script_variable",
     "build_arguments",
     "build_branch",
@@ -159,6 +162,7 @@ __all__ = [
     "reset_command_contract_cache",
     "restriction_allowed_values",
     "restriction_range",
+    "script_lock_owner",
     "script_write_lock",
     "find_condition_statement",
     "set_element_error_policy",
