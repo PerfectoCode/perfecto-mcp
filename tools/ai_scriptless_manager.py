@@ -637,7 +637,7 @@ class AiScriptlessManager(Manager):
             return BaseResult(error="test_id is required")
         if not name:
             return BaseResult(error="name is required")
-        owner = await script_lock_owner(self.token)
+        owner = await script_lock_owner(self.token, test_id)
         if owner.error:
             return owner
         async with script_write_lock(self.token.cloud_name, owner.result, test_id):

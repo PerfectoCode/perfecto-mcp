@@ -68,7 +68,7 @@ def offline_lock_owner(monkeypatch):
     """
     from tools import ai_scriptless_manager
 
-    async def owner(_token):
+    async def owner(_token, _item_key):
         return BaseResult(result="test-user")
 
     monkeypatch.setattr(persistence, "script_lock_owner", owner)

@@ -39,13 +39,21 @@ _script_write_locks: dict[tuple[str, str, str], _ScriptLock] = {}
 _script_write_locks_guard = asyncio.Lock()
 
 
-async def script_lock_owner(token: PerfectoToken) -> BaseResult:
-    """The user a script lock belongs to, read from Perfecto for each write and not kept.
+# The owner of a script every user reaches under the same item key.
+SHARED_SCRIPT_OWNER = "shared"
 
-    A PRIVATE item key names a different script for every user, so the lock is per
-    user. The user comes from the service rather than the token, so no token is held
-    in the lock table; the username is hashed so a dump of it shows no account either.
+
+async def script_lock_owner(token: PerfectoToken, item_key: str) -> BaseResult:
+    """Who a script lock belongs to: the user for a PRIVATE test, everyone for any other.
+
+    A PRIVATE item key names a different script for every user, so its lock is per
+    user; a PUBLIC or GROUP key names one script all its users share, so they share
+    its lock. The user is read from Perfecto for each write and not kept, so no token
+    is held in the lock table; the username is hashed so a dump of it shows no account.
     """
+    visibility = item_key.partition(":")[0]
+    if visibility and visibility != "PRIVATE":
+        return BaseResult(result=SHARED_SCRIPT_OWNER)
     user_url = perfecto.get_user_management_api_url(token.cloud_name) + "/current"
     result = await api_request(token, "GET", endpoint=user_url)
     if result.error:
@@ -119,6 +127,43 @@ def _short(value: Any, limit: int = 160) -> str:
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
+SECURED_SHOWN = "<secured>"
+
+
+def _is_secured(value: Any) -> bool:
+    if isinstance(value, dict):
+        return value.get("secured") is True or any(_is_secured(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_is_secured(item) for item in value)
+    return False
+
+
+def _without_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: SECURED_SHOWN if key == "value" else _without_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_without_values(item) for item in value]
+    return value
+
+
+def _sent_stored(sent: Any, stored: Any) -> str:
+    """The pair as the warning shows it; a value either side marks secured is shown as <secured>,
+    the way the other formatters show it."""
+    if _is_secured(sent) or _is_secured(stored):
+        sent, stored = _without_values(sent), _without_values(stored)
+    return f"sent {_short(sent)}, stored {_short(stored)}"
+
+
+def _arguments_by_name(arguments: Any) -> dict[Any, Any]:
+    # A multivalued parameter is stored as several arguments sharing its name, in order.
+    grouped: dict[Any, list] = {}
+    for argument in arguments or []:
+        if isinstance(argument, dict):
+            grouped.setdefault(argument.get("name"), []).append(argument)
+    return {name: occurrences[0] if len(occurrences) == 1 else occurrences
+            for name, occurrences in grouped.items()}
+
+
 def _step_label(element: Any) -> str:
     if not isinstance(element, dict):
         return _short(element)
@@ -143,7 +188,7 @@ def _step_differences(sent: list, stored: list, prefix: str, lines: list[str]) -
         if one == two:
             continue
         if not isinstance(one, dict) or not isinstance(two, dict):
-            lines.append(f"step {path}: sent {_short(one)}, stored {_short(two)}")
+            lines.append(f"step {path}: {_sent_stored(one, two)}")
             continue
         for key in sorted(set(one) | set(two)):
             if one.get(key) == two.get(key):
@@ -160,16 +205,14 @@ def _step_differences(sent: list, stored: list, prefix: str, lines: list[str]) -
                         lines,
                     )
             elif key == "arguments":
-                args_sent = {arg.get("name"): arg for arg in one.get(key) or [] if isinstance(arg, dict)}
-                args_stored = {arg.get("name"): arg for arg in two.get(key) or [] if isinstance(arg, dict)}
+                args_sent, args_stored = _arguments_by_name(one.get(key)), _arguments_by_name(two.get(key))
                 for name in sorted(set(args_sent) | set(args_stored), key=str):
                     if args_sent.get(name) != args_stored.get(name):
                         lines.append(
-                            f"step {path} argument {name}: sent {_short(args_sent.get(name))}, "
-                            f"stored {_short(args_stored.get(name))}"
+                            f"step {path} argument {name}: {_sent_stored(args_sent.get(name), args_stored.get(name))}"
                         )
             else:
-                lines.append(f"step {path} {key}: sent {_short(one.get(key))}, stored {_short(two.get(key))}")
+                lines.append(f"step {path} {key}: {_sent_stored(one.get(key), two.get(key))}")
 
 
 def _named(entries: Any) -> dict[str, Any]:
@@ -189,9 +232,7 @@ def describe_stored_differences(sent: ScriptInput, stored: ScriptInput) -> list[
         sent_named, stored_named = _named(one.get(section)), _named(two.get(section))
         for name in sorted(set(sent_named) | set(stored_named), key=str):
             if sent_named.get(name) != stored_named.get(name):
-                lines.append(
-                    f"{label} {name}: sent {_short(sent_named.get(name))}, stored {_short(stored_named.get(name))}"
-                )
+                lines.append(f"{label} {name}: {_sent_stored(sent_named.get(name), stored_named.get(name))}")
     return lines
 
 
@@ -216,16 +257,29 @@ async def _confirm_save(
         token: PerfectoToken,
         item_key: str,
         sent: ScriptInput,
-        before: ScriptInput,
+        before: Optional[ScriptInput],
         endpoints: ScriptEndpoints,
 ) -> Optional[str]:
-    """Read the script back until the save shows. Returns a warning when it does not."""
-    sent_print, before_print = script_fingerprint(sent), script_fingerprint(before)
+    """Read the script back until the save shows. Returns a warning when it does not.
+
+    ``before`` is the version the save replaced, or None when it is not known (a new
+    test, or a copy onto a key that may already hold one). The save already answered
+    success, so a read that fails is retried and at worst reported, never an error.
+    """
+    sent_print = script_fingerprint(sent)
+    before_print = script_fingerprint(before) if before is not None else None
     deadline = time.monotonic() + CONFIRM_TIMEOUT_SECONDS
+    read_any, last_failure = False, None
     while True:
-        payload = await fetch_script_payload(token, item_key, endpoints)
         stored = None
-        if not payload.error and isinstance(payload.result, dict):
+        try:
+            payload = await fetch_script_payload(token, item_key, endpoints)
+        except Exception as exc:
+            payload, last_failure = None, f"{type(exc).__name__}: {exc}"
+        if payload is not None and payload.error:
+            last_failure = str(payload.error)
+        elif payload is not None and isinstance(payload.result, dict):
+            read_any = True
             stored = payload.result.get("script", {})
             if script_fingerprint(stored) == sent_print:
                 return None
@@ -233,8 +287,14 @@ async def _confirm_save(
             # Neither the version before the save nor what was sent: the service applied
             # the save and stored something else. Only the last read counts, so a version
             # caught in passing while the save was still showing is not reported.
-            if stored is not None and script_fingerprint(stored) != before_print:
+            if stored is not None and before_print is not None and script_fingerprint(stored) != before_print:
                 return _stored_differently(sent, stored)
+            if not read_any:
+                return (
+                    f"Saved (the service answered success), but the test could not be read back to confirm "
+                    f"it ({(last_failure or 'no readable answer')[:200]}). Check with view_test_structure before "
+                    f"repeating the change, so it is not applied twice."
+                )
             return (
                 f"Saved (the service answered success), but reading the test back for "
                 f"{CONFIRM_TIMEOUT_SECONDS:g}s did not show the change. The service may still be applying "
@@ -327,17 +387,26 @@ async def persist_script(
         saved_script: Optional[ScriptInput] = None,
         snapshot_comment: Optional[str] = None,
 ) -> BaseResult:
-    owner = await script_lock_owner(token)
+    owner = await script_lock_owner(token, item_key)
     if owner.error:
         return owner
     async with script_write_lock(token.cloud_name, owner.result, item_key):
-        return await _persist_script(
+        # Read once: the save and the read-back go to the same service.
+        endpoints = await script_endpoints(token)
+        result = await _persist_script(
             token,
             item_key,
             script,
             saved_script,
             snapshot_comment,
+            endpoints,
         )
+        if result.error:
+            return result
+        unconfirmed = await _confirm_save(token, item_key, script, saved_script, endpoints)
+        if unconfirmed:
+            result.append_warnings([unconfirmed])
+        return result
 
 
 async def load_and_mutate(
@@ -346,7 +415,7 @@ async def load_and_mutate(
         mutator,
         snapshot_comment: Optional[str] = None,
 ) -> BaseResult:
-    owner = await script_lock_owner(token)
+    owner = await script_lock_owner(token, test_id)
     if owner.error:
         return owner
     async with script_write_lock(token.cloud_name, owner.result, test_id):

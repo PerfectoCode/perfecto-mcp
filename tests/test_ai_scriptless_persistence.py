@@ -19,6 +19,8 @@ import copy
 import hashlib
 import json
 
+import httpx
+
 from models.result import BaseResult
 from config.token import PerfectoToken
 from tools.ai_scriptless import persistence
@@ -52,13 +54,14 @@ class TestPersistScript:
         assert result.error is None
         assert result.result["draft_key"] == "draft-abc"
         assert result.result["flow_element_count"] == 1
-        assert len(calls) == 2
+        assert len(calls) == 3
         assert calls[0]["method"] == "POST"
         assert calls[0]["endpoint"].endswith("/script-draft-repository/draft")
         assert calls[1]["method"] == "POST"
         assert calls[1]["endpoint"].endswith("/script-repository/script")
         assert calls[1]["json"]["draftKey"] == "draft-abc"
         assert calls[1]["json"]["itemKey"] == "PRIVATE:Folder/Test.xml"
+        assert calls[2]["method"] == "GET"  # the read-back
 
     def test_persist_strips_uuid_before_draft_payload(self, perfecto_token, monkeypatch):
         captured_draft: dict = {}
@@ -104,7 +107,8 @@ class TestPersistScript:
         async def fake_api_request(_token, method, endpoint=None, **kwargs):
             if endpoint and "script-draft-repository" in endpoint:
                 return BaseResult(result={"key": "draft-abc"})
-            save_payload["json"] = kwargs.get("json")
+            if method == "POST":
+                save_payload["json"] = kwargs.get("json")
             return BaseResult(result={"status": "saved"})
 
         monkeypatch.setattr(persistence, "api_request", fake_api_request)
@@ -288,6 +292,7 @@ class _FakeStore:
         self.drop_next = False  # the next save answers success and keeps nothing
         self.refuse = False     # saves answer HTTP 400
         self.rewrite = None     # applied to what is kept, the way beta drops or converts content
+        self.failing_reads = 0  # the next reads raise, as a transport error would
         self.sent: list[dict] = []
         self.reads = 0
 
@@ -306,6 +311,9 @@ class _FakeStore:
     async def api_request(self, _token, method, endpoint=None, **kwargs):
         if method == "GET":
             self.reads += 1
+            if self.failing_reads:
+                self.failing_reads -= 1
+                raise httpx.ConnectError("connection reset")
             index = self.served
             if self.lag_reads:
                 self.lag_reads -= 1
@@ -506,6 +514,111 @@ class TestReadBackAfterSave:
         assert any(line.startswith("variable v: sent") and line.endswith("stored null") for line in lines)
 
 
+class TestReviewedReadBack:
+    """Read-back cases raised in review of the save confirmation."""
+
+    @staticmethod
+    def _store(monkeypatch) -> "_FakeStore":
+        store = _FakeStore()
+        monkeypatch.setattr(persistence, "api_request", store.api_request)
+        return store
+
+    def test_read_back_that_raises_is_retried_not_reported_as_failure(self, perfecto_token, monkeypatch):
+        store = self._store(monkeypatch)
+        monkeypatch.setattr(persistence, "CONFIRM_TIMEOUT_SECONDS", 5.0)
+
+        async def change():
+            # The read the change builds on works; the first read-back fails.
+            async def mutate(script):
+                store.failing_reads = 1
+                script.setdefault("flowElements", []).append(build_flow_element("comment", {"text": "first"}))
+            return await load_and_mutate(perfecto_token, ITEM, mutate)
+
+        result = asyncio.run(change())
+
+        assert result.error is None
+        assert result.warning is None
+
+    def test_read_back_that_never_works_warns_without_failing(self, perfecto_token, monkeypatch):
+        store = self._store(monkeypatch)
+
+        def mutate(script):
+            store.failing_reads = 99
+            script.setdefault("flowElements", []).append(build_flow_element("comment", {"text": "first"}))
+
+        result = asyncio.run(load_and_mutate(perfecto_token, ITEM, mutate))
+
+        assert result.error is None
+        warning = " ".join(result.warning)
+        assert "could not be read back to confirm it" in warning
+        assert "ConnectError" in warning
+
+    def test_secured_values_are_not_shown_in_the_warning(self, perfecto_token, monkeypatch):
+        store = self._store(monkeypatch)
+
+        def convert(script):
+            script["variables"][0]["data"]["value"] = "stored-cipher"
+
+        store.rewrite = convert
+
+        def adding_secured(script):
+            script.setdefault("variables", []).append({"@type": "Variable", "data": {
+                "@type": "StringData", "name": "password", "secured": True, "value": "sent-cipher"}})
+
+        result = asyncio.run(load_and_mutate(perfecto_token, ITEM, adding_secured))
+
+        warning = " ".join(result.warning)
+        assert "variable password" in warning and "<secured>" in warning
+        assert "sent-cipher" not in warning and "stored-cipher" not in warning
+
+    def test_an_earlier_occurrence_of_a_repeated_argument_is_named(self):
+        def concat(*values):
+            element = build_flow_element("comment", {"text": "x"})
+            element["arguments"] = [
+                {"@type": "FunctionArgument", "name": "value",
+                 "data": {"@type": "ConstantArgumentData", "dataSource": "CONSTANT", "value": value}}
+                for value in values
+            ]
+            script = new_empty_script()
+            script["flowElements"] = [element]
+            return script
+
+        lines = persistence.describe_stored_differences(concat("a", "b"), concat("changed", "b"))
+
+        assert len(lines) == 1
+        assert lines[0].startswith("step 0 argument value: sent [")
+        assert '"a"' in lines[0] and '"changed"' in lines[0]
+
+    def test_new_test_is_confirmed(self, perfecto_token, monkeypatch):
+        store = self._store(monkeypatch)
+        monkeypatch.setattr(persistence, "CONFIRM_TIMEOUT_SECONDS", 5.0)
+        store.lag_after_save = 1
+
+        result = asyncio.run(persist_script(perfecto_token, ITEM, _texts_script("created")))
+
+        assert result.error is None and result.warning is None
+        assert store.reads == 2  # the lagging read, then the save
+
+    def test_new_test_that_does_not_show_is_reported_as_not_shown(self, perfecto_token, monkeypatch):
+        # Nothing is known about what the key held before, so a read that differs is not
+        # called "stored differently": it may be the old content of a key being overwritten.
+        store = self._store(monkeypatch)
+        store.drop_next = True
+        store.edit_elsewhere(_texts_script("was there"))
+
+        result = asyncio.run(persist_script(perfecto_token, ITEM, _texts_script("copied")))
+
+        warning = " ".join(result.warning)
+        assert "did not show the change" in warning
+        assert "stored something different" not in warning
+
+
+def _texts_script(*texts: str) -> dict:
+    script = new_empty_script()
+    script["flowElements"] = [build_flow_element("comment", {"text": text}) for text in texts]
+    return script
+
+
 class TestScriptWriteLock:
     """One lock per user, cloud and script, kept only while someone holds or waits for it."""
 
@@ -581,7 +694,7 @@ class TestScriptLockOwner:
     def test_owner_is_the_hashed_username_from_the_current_user(self, monkeypatch):
         calls = self._users(monkeypatch, BaseResult(result={"username": self.USERNAME}))
 
-        owner = asyncio.run(REAL_LOCK_OWNER(self.TOKEN))
+        owner = asyncio.run(REAL_LOCK_OWNER(self.TOKEN, ITEM))
 
         assert owner.error is None
         assert owner.result == hashlib.sha256(self.USERNAME.encode("utf-8")).hexdigest()
@@ -591,23 +704,45 @@ class TestScriptLockOwner:
     def test_same_user_with_another_token_gets_the_same_owner(self, monkeypatch):
         self._users(monkeypatch, BaseResult(result={"username": self.USERNAME}))
 
-        first = asyncio.run(REAL_LOCK_OWNER(self.TOKEN))
-        second = asyncio.run(REAL_LOCK_OWNER(PerfectoToken("another-token-value", "cloud-one")))
+        first = asyncio.run(REAL_LOCK_OWNER(self.TOKEN, ITEM))
+        second = asyncio.run(REAL_LOCK_OWNER(PerfectoToken("another-token-value", "cloud-one"), ITEM))
 
         assert first.result == second.result
+
+    def test_public_and_group_tests_share_one_lock_without_a_lookup(self, monkeypatch):
+        calls = self._users(monkeypatch, BaseResult(result={"username": self.USERNAME}))
+
+        public = asyncio.run(REAL_LOCK_OWNER(self.TOKEN, "PUBLIC:Folder/Test.xml"))
+        other = asyncio.run(REAL_LOCK_OWNER(PerfectoToken("another-token-value", "cloud-one"),
+                                            "PUBLIC:Folder/Test.xml"))
+        group = asyncio.run(REAL_LOCK_OWNER(self.TOKEN, "GROUP:Folder/Test.xml"))
+
+        assert public.result == other.result == group.result == persistence.SHARED_SCRIPT_OWNER
+        assert calls == []
+
+    def test_two_users_wait_for_each_other_on_a_public_test(self, monkeypatch):
+        async def both():
+            owner_one = await REAL_LOCK_OWNER(self.TOKEN, "PUBLIC:Folder/Test.xml")
+            owner_two = await REAL_LOCK_OWNER(PerfectoToken("another-token-value", "cloud-one"),
+                                              "PUBLIC:Folder/Test.xml")
+            return await TestScriptWriteLock._second_waits(
+                ("cloud-one", owner_one.result), ("cloud-one", owner_two.result))
+
+        assert asyncio.run(both()) is True
+        assert persistence._script_write_locks == {}
 
     def test_lookup_error_is_returned(self, monkeypatch):
         self._users(monkeypatch, BaseResult(error="Invalid credentials"))
 
-        assert asyncio.run(REAL_LOCK_OWNER(self.TOKEN)).error == "Invalid credentials"
+        assert asyncio.run(REAL_LOCK_OWNER(self.TOKEN, ITEM)).error == "Invalid credentials"
 
     def test_answer_without_username_is_an_error(self, monkeypatch):
         self._users(monkeypatch, BaseResult(result={"firstName": "Alice"}))
 
-        assert "Could not read the current Perfecto user" in asyncio.run(REAL_LOCK_OWNER(self.TOKEN)).error
+        assert "Could not read the current Perfecto user" in asyncio.run(REAL_LOCK_OWNER(self.TOKEN, ITEM)).error
 
     def test_write_is_not_made_when_the_owner_is_unknown(self, monkeypatch):
-        async def no_owner(_token):
+        async def no_owner(_token, _item_key):
             return BaseResult(error="Invalid credentials")
 
         calls = self._users(monkeypatch, BaseResult(result={"script": new_empty_script()}))

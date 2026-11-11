@@ -205,4 +205,4 @@ class TestOlderStoreEndToEnd:
         result = asyncio.run(persistence.persist_script(perfecto_token, TEST_ID, new_empty_script()))
 
         assert result.error is None
-        assert calls == [("POST", NATIVE_DRAFT), ("POST", NATIVE + "/script")]
+        assert calls == [("POST", NATIVE_DRAFT), ("POST", NATIVE + "/script"), ("GET", NATIVE + "/script")]
