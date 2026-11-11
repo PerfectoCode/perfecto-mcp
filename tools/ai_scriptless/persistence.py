@@ -29,6 +29,21 @@ async def fetch_script_payload(
     return await api_request(token, "GET", endpoint=script_url)
 
 
+NO_SCRIPT_READ = "the service answered without the test's content"
+
+
+def _script_of(payload_result: BaseResult) -> Optional[dict]:
+    """The script a read returned, or None when it returned no script to build on.
+
+    A missing, null or empty script is not an empty test: an empty test still holds
+    its parameters and settings. Building on one, or copying it, would write an empty
+    script over the test.
+    """
+    payload = payload_result.result if isinstance(payload_result.result, dict) else {}
+    script = payload.get("script")
+    return script if isinstance(script, dict) and script else None
+
+
 @dataclass
 class _ScriptLock:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -326,9 +341,9 @@ async def _confirm_save(
         if payload is not None and payload.error:
             last_failure = str(payload.error)
         elif payload is not None:
-            script = payload.result.get("script") if isinstance(payload.result, dict) else None
+            script = _script_of(payload)
             try:
-                stored_print = script_fingerprint(script) if isinstance(script, dict) else None
+                stored_print = script_fingerprint(script) if script is not None else None
             except Exception as exc:
                 last_failure = f"unreadable script: {type(exc).__name__}: {exc}"
             if stored_print is None:
@@ -501,8 +516,10 @@ async def copy_script(
         payload_result = await fetch_script_payload(token, source_key, endpoints)
         if payload_result.error:
             return payload_result
-        payload = payload_result.result if isinstance(payload_result.result, dict) else {}
-        script = copy.deepcopy(payload.get("script", {}))
+        source = _script_of(payload_result)
+        if source is None:
+            return BaseResult(error=f"Could not read the test to copy ({NO_SCRIPT_READ}), so nothing was saved.")
+        script = copy.deepcopy(source)
         # Onto its own key the version being replaced is known; onto another it is not.
         replaced = copy.deepcopy(script) if target_key == source_key else None
         return await _save_and_confirm(token, target_key, script, replaced, snapshot_comment, endpoints)
@@ -523,9 +540,11 @@ async def load_and_mutate(
         payload_result = await fetch_script_payload(token, test_id, endpoints)
         if payload_result.error:
             return payload_result
-        payload = payload_result.result
-        script = copy.deepcopy(payload.get("script", {}))
-        saved_script = copy.deepcopy(payload.get("script", {}))
+        current = _script_of(payload_result)
+        if current is None:
+            return BaseResult(error=f"Could not read the test ({NO_SCRIPT_READ}), so it was not changed.")
+        script = copy.deepcopy(current)
+        saved_script = copy.deepcopy(current)
         normalize_if_statement_aliases(script)
         try:
             outcome = mutator(script)

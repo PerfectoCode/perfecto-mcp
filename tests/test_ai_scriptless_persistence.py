@@ -20,6 +20,7 @@ import hashlib
 import json
 
 import httpx
+import pytest
 
 from models.result import BaseResult
 from config.token import PerfectoToken
@@ -834,6 +835,52 @@ class TestCopyScript:
         asyncio.run(both())
 
         assert persistence._script_write_locks == {}
+
+
+class TestEmptyReads:
+    """A read without the test's content is never built on, copied or taken as confirmation."""
+
+    @staticmethod
+    def _answering(monkeypatch, read_answer) -> list:
+        writes = []
+
+        async def fake_api_request(_token, method, endpoint=None, **kwargs):
+            if method == "GET":
+                return BaseResult(result=copy.deepcopy(read_answer))
+            writes.append(endpoint)
+            if "script-draft-repository" in endpoint:
+                return BaseResult(result={"key": "draft-1"})
+            return BaseResult(result={"status": "success"})
+
+        monkeypatch.setattr(persistence, "api_request", fake_api_request)
+        return writes
+
+    @pytest.mark.parametrize("answer", [{"script": None}, {"script": {}}, {}, None])
+    def test_change_is_not_built_on_a_read_without_content(self, perfecto_token, monkeypatch, answer):
+        writes = self._answering(monkeypatch, answer)
+
+        result = asyncio.run(load_and_mutate(perfecto_token, ITEM, _adding("first")))
+
+        assert result.error == ("Could not read the test (the service answered without the test's content), "
+                                "so it was not changed.")
+        assert writes == []
+
+    @pytest.mark.parametrize("answer", [{"script": None}, {"script": {}}, {}])
+    def test_copy_is_not_made_from_a_read_without_content(self, perfecto_token, monkeypatch, answer):
+        writes = self._answering(monkeypatch, answer)
+
+        result = asyncio.run(persistence.copy_script(perfecto_token, ITEM, "PRIVATE:Folder/Copy.xml"))
+
+        assert "nothing was saved" in result.error
+        assert writes == []
+
+    def test_empty_read_back_does_not_confirm_an_empty_save(self, perfecto_token, monkeypatch):
+        self._answering(monkeypatch, {"script": {}})
+
+        result = asyncio.run(persist_script(perfecto_token, ITEM, {}))
+
+        assert result.error is None
+        assert "the answer held no script" in " ".join(result.warning)
 
 
 def _texts_script(*texts: str) -> dict:
