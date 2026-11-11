@@ -209,21 +209,31 @@ def _step_differences(sent: list, stored: list, prefix: str, lines: list[str]) -
                     )
             elif key == "arguments":
                 args_sent, args_stored = _arguments_by_name(one.get(key)), _arguments_by_name(two.get(key))
-                for name in sorted(set(args_sent) | set(args_stored), key=str):
-                    if args_sent.get(name) != args_stored.get(name):
-                        lines.append(
-                            f"step {path} argument {name}: {_sent_stored(args_sent.get(name), args_stored.get(name))}"
-                        )
+                named_differences = [
+                    f"step {path} argument {name}: {_sent_stored(args_sent.get(name), args_stored.get(name))}"
+                    for name in sorted(set(args_sent) | set(args_stored), key=str)
+                    if args_sent.get(name) != args_stored.get(name)
+                ]
+                # Same arguments by name, so what differs is the order they were stored in.
+                lines.extend(named_differences or [
+                    f"step {path} argument order: sent {_short(_argument_names(one.get(key)))}, "
+                    f"stored {_short(_argument_names(two.get(key)))}"
+                ])
             else:
                 lines.append(f"step {path} {key}: {_sent_stored(one.get(key), two.get(key))}")
+
+
+def _argument_names(arguments: Any) -> list:
+    return [argument.get("name") if isinstance(argument, dict) else None for argument in arguments or []]
 
 
 def _named(entries: Any) -> dict[str, Any]:
     named = {}
     for index, entry in enumerate(entries or []):
-        name = (entry.get("data") or {}).get("name") if isinstance(entry, dict) else None
+        data = entry.get("data") if isinstance(entry, dict) else None
+        name = data.get("name") if isinstance(data, dict) else None
         # An entry without a name goes by its position: its content may hold a secured value.
-        named[name or f"#{index}"] = entry
+        named[name if isinstance(name, str) and name else f"#{index}"] = entry
     return named
 
 
@@ -234,9 +244,17 @@ def describe_stored_differences(sent: ScriptInput, stored: ScriptInput) -> list[
     _step_differences(one.get("flowElements") or [], two.get("flowElements") or [], "", lines)
     for section, label in (("variables", "variable"), ("parameters", "parameter")):
         sent_named, stored_named = _named(one.get(section)), _named(two.get(section))
-        for name in sorted(set(sent_named) | set(stored_named), key=str):
-            if sent_named.get(name) != stored_named.get(name):
-                lines.append(f"{label} {name}: {_sent_stored(sent_named.get(name), stored_named.get(name))}")
+        named_differences = [
+            f"{label} {name}: {_sent_stored(sent_named.get(name), stored_named.get(name))}"
+            for name in sorted(set(sent_named) | set(stored_named), key=str)
+            if sent_named.get(name) != stored_named.get(name)
+        ]
+        if not named_differences and one.get(section) != two.get(section):
+            # Same entries by name, so what differs is the order they were stored in.
+            named_differences = [
+                f"{section} order: sent {_short(list(sent_named))}, stored {_short(list(stored_named))}"
+            ]
+        lines.extend(named_differences)
     return lines
 
 
@@ -244,7 +262,14 @@ DIFFERENCES_SHOWN = 5
 
 
 def _stored_differently(sent: ScriptInput, stored: ScriptInput) -> str:
-    lines = describe_stored_differences(sent, stored)
+    # This runs after the save answered success, so content it cannot take apart is
+    # still reported as a warning, never raised.
+    try:
+        lines = describe_stored_differences(sent, stored)
+    except Exception:
+        lines = []
+    if not lines:
+        lines = ["the comparison could not name where (the content's order or shape differs)"]
     shown = "; ".join(lines[:DIFFERENCES_SHOWN])
     if len(lines) > DIFFERENCES_SHOWN:
         shown += f"; and {len(lines) - DIFFERENCES_SHOWN} more"

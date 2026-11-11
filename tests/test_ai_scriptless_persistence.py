@@ -669,6 +669,61 @@ class TestSecondReviewReadBack:
         assert "secret-cipher" not in " ".join(lines)
 
 
+class TestThirdReviewReadBack:
+    """Read-back cases raised in the third review of the save confirmation."""
+
+    @staticmethod
+    def _with_arguments(*names: str) -> dict:
+        element = build_flow_element("comment", {"text": "x"})
+        element["arguments"] = [
+            {"@type": "FunctionArgument", "name": name,
+             "data": {"@type": "ConstantArgumentData", "dataSource": "CONSTANT", "value": name + "-value"}}
+            for name in names
+        ]
+        script = new_empty_script()
+        script["flowElements"] = [element]
+        return script
+
+    def test_reordered_arguments_are_named(self):
+        lines = persistence.describe_stored_differences(
+            self._with_arguments("first", "second"), self._with_arguments("second", "first"))
+
+        assert lines == ['step 0 argument order: sent ["first", "second"], stored ["second", "first"]']
+
+    def test_reordered_variables_are_named(self):
+        def with_variables(*names):
+            script = new_empty_script()
+            script["variables"] = [{"@type": "Variable", "data": {"@type": "StringData", "name": name, "value": "v"}}
+                                   for name in names]
+            return script
+
+        lines = persistence.describe_stored_differences(with_variables("a", "b"), with_variables("b", "a"))
+
+        assert lines == ['variables order: sent ["a", "b"], stored ["b", "a"]']
+
+    def test_variable_whose_data_is_not_an_object_goes_by_position(self):
+        stored = new_empty_script()
+        stored["variables"] = [{"@type": "Variable", "data": "not an object"}]
+
+        lines = persistence.describe_stored_differences(new_empty_script(), stored)
+
+        assert lines and lines[0].startswith("variable #0:")
+
+    def test_content_the_comparison_cannot_take_apart_still_warns(self, perfecto_token, monkeypatch):
+        store = _FakeStore()
+        monkeypatch.setattr(persistence, "api_request", store.api_request)
+
+        def unreadable(script):
+            script["flowElements"][-1]["flowElements"] = {"not": "a list"}
+
+        store.rewrite = unreadable
+
+        result = asyncio.run(load_and_mutate(perfecto_token, ITEM, _adding("first")))
+
+        assert result.error is None
+        assert "the comparison could not name where" in " ".join(result.warning)
+
+
 def _texts_script(*texts: str) -> dict:
     script = new_empty_script()
     script["flowElements"] = [build_flow_element("comment", {"text": text}) for text in texts]
