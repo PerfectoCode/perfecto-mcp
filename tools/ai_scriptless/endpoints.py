@@ -11,13 +11,17 @@ which one a cloud runs, and the Perfecto UI chooses its endpoints from them:
   deleting a test.
 
 These rules are the UI's own (its selectors for the tree, draft, open, save and
-delete endpoints). A setting that is missing, false or cannot be read means the
-older version, so a cloud that predates the settings keeps working.
+delete endpoints). A setting that is missing or false means the older version, so a
+cloud that predates the settings keeps working. Settings that cannot be read say
+nothing about the cloud: the read is tried again once, and if it still fails the
+operation stops with an error rather than guess, since a guess could send a save to
+the store that does not hold the test.
 
 The settings are read again for every operation and not kept: one server process
 serves many users and clouds, and a value kept in memory would outlive the request
 that read it.
 """
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -28,6 +32,12 @@ from tools.utils import api_request
 SCRIPTLESS_ENGINE_SETTING = "scriptless-mobile-ide.scriptless-mobile-engine.enabled"
 SCRIPT_REPOSITORY_SETTING = "scriptless-mobile-ide.scriptless-mobile-engine.script-repository.enabled"
 FEATURE_SETTINGS_CATEGORY = "ui"
+SETTINGS_ATTEMPTS = 2
+SETTINGS_RETRY_SECONDS = 1.0
+
+
+class ScriptStoreUnknown(Exception):
+    """The feature settings that pick the store could not be read; nothing was done."""
 
 
 @dataclass(frozen=True)
@@ -49,26 +59,42 @@ def _enabled(setting: Any) -> bool:
 
 
 async def read_scriptless_settings(token: PerfectoToken) -> tuple[bool, bool]:
-    """(engine, script repository) for this user and cloud; (False, False) when unreadable."""
-    try:
-        result = await api_request(
-            token,
-            "GET",
-            endpoint=perfecto.get_feature_settings_api_url(token.cloud_name),
-            params={"category": FEATURE_SETTINGS_CATEGORY},
-        )
-    except Exception:
-        return False, False
-    if result.error or not isinstance(result.result, list):
-        return False, False
-    settings = {
-        setting.get("name"): setting
-        for setting in result.result
-        if isinstance(setting, dict)
-    }
-    engine = _enabled(settings.get(SCRIPTLESS_ENGINE_SETTING))
-    script_repository = engine and _enabled(settings.get(SCRIPT_REPOSITORY_SETTING))
-    return engine, script_repository
+    """(engine, script repository) for this user and cloud.
+
+    Raises ScriptStoreUnknown when the settings cannot be read on any attempt.
+    """
+    cause = "no answer"
+    for attempt in range(SETTINGS_ATTEMPTS):
+        if attempt:
+            await asyncio.sleep(SETTINGS_RETRY_SECONDS)
+        try:
+            result = await api_request(
+                token,
+                "GET",
+                endpoint=perfecto.get_feature_settings_api_url(token.cloud_name),
+                params={"category": FEATURE_SETTINGS_CATEGORY},
+            )
+        except Exception as exc:
+            cause = f"{type(exc).__name__}: {exc or 'no detail'}"
+            continue
+        if result.error:
+            cause = str(result.error)
+            continue
+        if not isinstance(result.result, list):
+            cause = f"unexpected answer ({type(result.result).__name__})"
+            continue
+        settings = {
+            setting.get("name"): setting
+            for setting in result.result
+            if isinstance(setting, dict)
+        }
+        engine = _enabled(settings.get(SCRIPTLESS_ENGINE_SETTING))
+        script_repository = engine and _enabled(settings.get(SCRIPT_REPOSITORY_SETTING))
+        return engine, script_repository
+    raise ScriptStoreUnknown(
+        f"Could not tell which AI Scriptless service this cloud uses: reading its feature settings failed "
+        f"{SETTINGS_ATTEMPTS} times ({cause[:200]}). Nothing was read or changed; try again in a moment."
+    )
 
 
 def endpoints_for(cloud_name: str, engine: bool, script_repository: bool) -> ScriptEndpoints:

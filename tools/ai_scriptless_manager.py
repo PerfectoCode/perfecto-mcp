@@ -63,7 +63,7 @@ from tools.ai_scriptless_script import (
     validate_variable_bindings,
 )
 from tools.ai_scriptless.definitions import SUPPORTED_ERROR_POLICIES
-from tools.ai_scriptless.endpoints import script_endpoints
+from tools.ai_scriptless.endpoints import ScriptStoreUnknown, script_endpoints
 from tools.utils import (
     Operations,
     api_request,
@@ -1448,6 +1448,8 @@ Hints:
 
         try:
             return await run_tool(f"{TOOLS_PREFIX}_ai_scriptless", action, ctx, _dispatch)
+        except ScriptStoreUnknown as exc:
+            return BaseResult(error=str(exc))
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {format_sanitized_traceback()}"

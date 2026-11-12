@@ -27,6 +27,7 @@ from tools.ai_scriptless.elements import build_flow_element, new_empty_script
 from tools.ai_scriptless.endpoints import (
     SCRIPT_REPOSITORY_SETTING,
     SCRIPTLESS_ENGINE_SETTING,
+    ScriptStoreUnknown,
     endpoints_for,
 )
 from tools.ai_scriptless_manager import AiScriptlessManager
@@ -45,11 +46,14 @@ def _setting(name: str, value) -> dict:
     return {"name": name, "value": value, "type": "BOOLEAN", "categories": ["ui"]}
 
 
-def _answer_settings(monkeypatch, answer) -> list:
+def _answer_settings(monkeypatch, *answers) -> list:
+    """Answer each settings read in turn; the last answer repeats."""
     calls = []
+    monkeypatch.setattr(endpoints, "SETTINGS_RETRY_SECONDS", 0.0)
 
     async def fake_api_request(_token, method, endpoint=None, **kwargs):
         calls.append((method, endpoint, kwargs.get("params")))
+        answer = answers[min(len(calls), len(answers)) - 1]
         if isinstance(answer, Exception):
             raise answer
         return answer
@@ -59,7 +63,7 @@ def _answer_settings(monkeypatch, answer) -> list:
 
 
 class TestReadScriptlessSettings:
-    """The Perfecto UI's rule: a missing, false or unreadable setting means the older store."""
+    """The Perfecto UI's rule: a missing or false setting means the older store; an unreadable one stops."""
 
     @pytest.mark.parametrize("engine, repository, expected", [
         ("true", "true", (True, True)),
@@ -96,10 +100,76 @@ class TestReadScriptlessSettings:
         httpx.ConnectError("no route"),
         RuntimeError("anything else"),
     ])
-    def test_unreadable_settings_mean_the_older_store(self, perfecto_token, monkeypatch, answer):
-        _answer_settings(monkeypatch, answer)
+    def test_unreadable_settings_stop_after_one_retry(self, perfecto_token, monkeypatch, answer):
+        # A failed read says nothing about the cloud; guessing the older store could
+        # send a save to the store that does not hold the test.
+        calls = _answer_settings(monkeypatch, answer)
 
-        assert asyncio.run(REAL_READ_SETTINGS(perfecto_token)) == (False, False)
+        with pytest.raises(ScriptStoreUnknown, match="Nothing was read or changed"):
+            asyncio.run(REAL_READ_SETTINGS(perfecto_token))
+
+        assert len(calls) == 2
+
+    def test_a_retry_that_reads_the_settings_is_used(self, perfecto_token, monkeypatch):
+        calls = _answer_settings(monkeypatch, httpx.ReadTimeout("slow"), BaseResult(result=[
+            _setting(SCRIPTLESS_ENGINE_SETTING, "true"),
+            _setting(SCRIPT_REPOSITORY_SETTING, "true"),
+        ]))
+
+        assert asyncio.run(REAL_READ_SETTINGS(perfecto_token)) == (True, True)
+        assert len(calls) == 2
+
+    def test_the_error_names_the_cause(self, perfecto_token, monkeypatch):
+        _answer_settings(monkeypatch, BaseResult(error="Invalid credentials"))
+
+        with pytest.raises(ScriptStoreUnknown, match=r"failed 2 times \(Invalid credentials\)"):
+            asyncio.run(REAL_READ_SETTINGS(perfecto_token))
+
+
+class TestStoreUnknownReachesTheAgent:
+    """An unreadable store stops the tool with its error, and nothing is read or written."""
+
+    @pytest.mark.parametrize("action, args", [
+        ("list_tests", {"page_index": 1}),
+        ("view_test_structure", {"test_id": TEST_ID}),
+    ])
+    def test_tool_returns_the_error_without_touching_a_store(self, perfecto_token, monkeypatch, action, args):
+        from tests.test_ai_scriptless_manager import _call_tool, _register_tool
+
+        async def unknown(_token):
+            raise ScriptStoreUnknown("Could not tell which AI Scriptless service this cloud uses: test")
+
+        store_calls = []
+
+        async def fake_api_request(*_args, **_kwargs):
+            store_calls.append(1)
+            return BaseResult(result=[])
+
+        monkeypatch.setattr(endpoints, "read_scriptless_settings", unknown)
+        monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
+
+        result = asyncio.run(_call_tool(_register_tool(perfecto_token), action, args))
+
+        assert result.error == "Could not tell which AI Scriptless service this cloud uses: test"
+        assert store_calls == []
+
+    def test_change_writes_nothing(self, perfecto_token, monkeypatch):
+        async def unknown(_token):
+            raise ScriptStoreUnknown("unknown")
+
+        writes = []
+
+        async def fake_api_request(*_args, **_kwargs):
+            writes.append(1)
+            return BaseResult(result={"status": "success"})
+
+        monkeypatch.setattr(endpoints, "read_scriptless_settings", unknown)
+        monkeypatch.setattr(persistence, "api_request", fake_api_request)
+
+        with pytest.raises(ScriptStoreUnknown):
+            asyncio.run(persistence.load_and_mutate(perfecto_token, TEST_ID, lambda script: None))
+
+        assert writes == []
 
 
 class TestEndpointsFor:
