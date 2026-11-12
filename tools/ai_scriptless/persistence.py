@@ -496,6 +496,40 @@ async def _save_and_confirm(
     return result
 
 
+async def delete_script(token: PerfectoToken, item_key: str) -> BaseResult:
+    """Delete a test once no write to it is in flight.
+
+    A change holding the test's lock sends its save after the delete would have
+    answered, and that save would create the test again; waiting for the lock lets
+    the change finish first, so the delete is the last word.
+    """
+    owner = await script_lock_owner(token, item_key)
+    if owner.error:
+        return owner
+    async with script_write_lock(token.cloud_name, owner.result, item_key):
+        endpoints = await script_endpoints(token)
+        return await api_request(token, "DELETE", endpoint=endpoints.delete_url, params={"itemKey": item_key})
+
+
+async def with_script_locks(token: PerfectoToken, item_keys, operation) -> BaseResult:
+    """Run ``operation`` (an async callable) holding the write lock of every key given.
+
+    For what touches two scripts at once, such as a copy or a move: a change to either
+    cannot land while it runs.
+    """
+    owners = {}
+    for key in item_keys:
+        owner = await script_lock_owner(token, key)
+        if owner.error:
+            return owner
+        owners[key] = owner.result
+    async with AsyncExitStack() as held:
+        # A fixed order, so two operations running opposite ways cannot wait on each other.
+        for key in sorted(owners):
+            await held.enter_async_context(script_write_lock(token.cloud_name, owners[key], key))
+        return await operation()
+
+
 async def copy_script(
         token: PerfectoToken,
         source_key: str,
@@ -508,16 +542,7 @@ async def copy_script(
     a change to either script cannot land in between and be overwritten, and the
     settings are read once, so the copy is read from and written to the same service.
     """
-    owners = {}
-    for key in (source_key, target_key):
-        owner = await script_lock_owner(token, key)
-        if owner.error:
-            return owner
-        owners[key] = owner.result
-    async with AsyncExitStack() as held:
-        # A fixed order, so two copies running opposite ways cannot wait on each other.
-        for key in sorted(owners):
-            await held.enter_async_context(script_write_lock(token.cloud_name, owners[key], key))
+    async def copy_now() -> BaseResult:
         endpoints = await script_endpoints(token)
         payload_result = await fetch_script_payload(token, source_key, endpoints)
         if payload_result.error:
@@ -529,6 +554,8 @@ async def copy_script(
         # Onto its own key the version being replaced is known; onto another it is not.
         replaced = copy.deepcopy(script) if target_key == source_key else None
         return await _save_and_confirm(token, target_key, script, replaced, snapshot_comment, endpoints)
+
+    return await with_script_locks(token, (source_key, target_key), copy_now)
 
 
 async def load_and_mutate(

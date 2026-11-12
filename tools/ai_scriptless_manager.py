@@ -51,6 +51,8 @@ from tools.ai_scriptless_script import (
     normalize_if_statement_aliases,
     persist_script,
     copy_script,
+    delete_script,
+    with_script_locks,
     find_condition_statement,
     set_element_error_policy,
     set_element_enabled,
@@ -819,13 +821,7 @@ class AiScriptlessManager(Manager):
     async def delete_test(self, test_id: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
-        delete_url = (await script_endpoints(self.token)).delete_url
-        return await api_request(
-            self.token,
-            "DELETE",
-            endpoint=delete_url,
-            params={"itemKey": test_id},
-        )
+        return await delete_script(self.token, test_id)
 
     @token_verify
     @require_confirmation(operation=Operations.UPDATE)
@@ -846,14 +842,20 @@ class AiScriptlessManager(Manager):
         target_visibility = visibility or source_visibility
         move_url = perfecto.get_repository_management_api_url(self.token.cloud_name) + "/artifacts"
         body = build_move_test_body(test_id, folder, target_visibility)
-        result = await api_request(self.token, "PATCH", endpoint=move_url, json=body)
-        if result.error:
-            return result
         target_item_key = build_item_key(
             target_visibility,
             folder,
             item_key_file_name(test_id).removesuffix(".xml"),
         )
+
+        async def move_now() -> BaseResult:
+            return await api_request(self.token, "PATCH", endpoint=move_url, json=body)
+
+        # A save in flight on either test must land before the move, or it would bring
+        # the source back or be overwritten at the target.
+        result = await with_script_locks(self.token, (test_id, target_item_key), move_now)
+        if result.error:
+            return result
         result.result = {
             "source_item_key": test_id,
             "target_item_key": target_item_key,

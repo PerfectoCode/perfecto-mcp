@@ -216,7 +216,7 @@ class TestOlderStoreEndToEnd:
         return reads
 
     @staticmethod
-    def _record(monkeypatch, module) -> list:
+    def _record(monkeypatch, *modules) -> list:
         calls = []
 
         async def fake_api_request(_token, method, endpoint=None, result_formatter=None,
@@ -232,12 +232,14 @@ class TestOlderStoreEndToEnd:
                 return BaseResult(result=[])
             return BaseResult(result={"status": "success"})
 
-        monkeypatch.setattr(module, "api_request", fake_api_request)
+        for module in modules:
+            monkeypatch.setattr(module, "api_request", fake_api_request)
         return calls
 
     def test_tree_read_and_delete(self, perfecto_token, monkeypatch):
         self._older(monkeypatch)
-        calls = self._record(monkeypatch, ai_scriptless_manager)
+        # The delete goes through persistence, under the test's lock.
+        calls = self._record(monkeypatch, ai_scriptless_manager, persistence)
         manager = AiScriptlessManager(make_ctx(perfecto_token))
 
         asyncio.run(manager.list_tests({"page_index": 1}))

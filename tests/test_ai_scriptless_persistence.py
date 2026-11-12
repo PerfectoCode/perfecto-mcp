@@ -807,6 +807,55 @@ class TestThirdReviewReadBack:
         assert "the comparison could not name where" in " ".join(result.warning)
 
 
+class TestDeleteScript:
+    """A delete waits for a write in flight, so the save cannot bring the test back."""
+
+    def test_delete_waits_for_a_change_in_flight(self, perfecto_token, monkeypatch):
+        order = []
+        saving = asyncio.Event()
+        finish_save = asyncio.Event()
+
+        async def fake_api_request(_token, method, endpoint=None, **_kwargs):
+            if method == "GET":
+                return BaseResult(result={"script": _texts_script("kept")})
+            if "script-draft-repository" in endpoint:
+                saving.set()
+                await finish_save.wait()
+                return BaseResult(result={"key": "draft-1"})
+            order.append(method)
+            return BaseResult(result={"status": "success"})
+
+        monkeypatch.setattr(persistence, "api_request", fake_api_request)
+
+        async def both():
+            change = asyncio.create_task(load_and_mutate(perfecto_token, ITEM, _adding("new")))
+            await saving.wait()
+            delete = asyncio.create_task(persistence.delete_script(perfecto_token, ITEM))
+            await asyncio.sleep(0.05)
+            finish_save.set()
+            await asyncio.gather(change, delete)
+
+        asyncio.run(both())
+
+        assert order == ["POST", "DELETE"]  # the save first, then the delete
+        assert persistence._script_write_locks == {}
+
+    def test_delete_uses_the_selected_store(self, perfecto_token, monkeypatch):
+        calls = []
+
+        async def fake_api_request(_token, method, endpoint=None, **kwargs):
+            calls.append((method, endpoint, kwargs.get("params")))
+            return BaseResult(result={"status": "deleted"})
+
+        monkeypatch.setattr(persistence, "api_request", fake_api_request)
+
+        result = asyncio.run(persistence.delete_script(perfecto_token, ITEM))
+
+        assert result.error is None
+        assert calls == [("DELETE", "https://demo.perfectomobile.com/scriptless-mobile-engine/script-asset-manager"
+                                    "/api/script-repository/script", {"itemKey": ITEM})]
+
+
 class TestCopyScript:
     """Save as: both locks and one service from reading the source to reading back the copy."""
 

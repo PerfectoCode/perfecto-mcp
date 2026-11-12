@@ -45,6 +45,8 @@ from tools.ai_scriptless.item_key import (
 from tools.ai_scriptless.persistence import (
     _persist_script,
     copy_script,
+    delete_script,
+    with_script_locks,
     fetch_script_payload,
     load_and_mutate,
     persist_script,
@@ -113,6 +115,8 @@ __all__ = [
     "VISIBILITY_UI_ROOT",
     "_persist_script",
     "copy_script",
+    "delete_script",
+    "with_script_locks",
     "add_script_variable",
     "build_arguments",
     "build_branch",

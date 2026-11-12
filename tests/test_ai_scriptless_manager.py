@@ -25,7 +25,7 @@ import pytest
 from config.perfecto import SUPPORT_MESSAGE
 from models.result import BaseResult
 from tools import ai_scriptless_manager
-from tools.ai_scriptless import definitions
+from tools.ai_scriptless import definitions, persistence
 from tools.ai_scriptless.variables import add_script_variable
 from tools.ai_scriptless.elements import (
     build_flow_element,
@@ -1321,6 +1321,50 @@ class TestRepositoryOperations:
         result = asyncio.run(manager.save_test_as(TEST_ID, "Copy"))
         assert result.error == "source missing"
 
+    @pytest.mark.parametrize("edited", ["source", "target"])
+    def test_move_waits_for_a_change_in_flight(self, perfecto_token, monkeypatch, edited):
+        target_key = "PRIVATE:Archive/Test.xml"
+        order = []
+        saving, finish_save = asyncio.Event(), asyncio.Event()
+
+        async def store_api_request(_token, method, endpoint=None, **_kwargs):
+            if method == "GET":
+                script = new_empty_script()
+                script["flowElements"] = [build_flow_element("wait")]
+                return BaseResult(result={"script": script})
+            if "script-draft-repository" in endpoint:
+                saving.set()
+                await finish_save.wait()
+                return BaseResult(result={"key": "draft-1"})
+            order.append("save")
+            return BaseResult(result={"status": "success"})
+
+        async def move_api_request(_token, method, endpoint=None, **_kwargs):
+            order.append("move")
+            return BaseResult(result={"status": "moved"})
+
+        monkeypatch.setattr(persistence, "api_request", store_api_request)
+        monkeypatch.setattr(ai_scriptless_manager, "api_request", move_api_request)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+
+        def adding(script):
+            script["flowElements"].append(build_flow_element("wait"))
+
+        async def both():
+            edited_key = TEST_ID if edited == "source" else target_key
+            change = asyncio.create_task(persistence.load_and_mutate(perfecto_token, edited_key, adding))
+            await saving.wait()
+            move = asyncio.create_task(manager.move_test(TEST_ID, "Archive"))
+            await asyncio.sleep(0.05)
+            finish_save.set()
+            return await asyncio.gather(change, move)
+
+        _change, moved = asyncio.run(both())
+
+        assert moved.error is None
+        assert moved.result["target_item_key"] == target_key
+        assert order == ["save", "move"]  # the save lands before the move
+
     def test_move_test_propagates_api_error(self, perfecto_token, monkeypatch):
         async def fake_api_request(*_args, **_kwargs):
             return BaseResult(error="move denied")
@@ -1370,7 +1414,7 @@ class TestRepositoryOperations:
             captured["params"] = kwargs.get("params")
             return BaseResult(result={"status": "deleted"})
 
-        monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
+        monkeypatch.setattr(persistence, "api_request", fake_api_request)
 
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.delete_test(TEST_ID))
@@ -1388,7 +1432,7 @@ class TestRepositoryOperations:
         async def fake_api_request(*_args, **_kwargs):
             return BaseResult(error="delete denied")
 
-        monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
+        monkeypatch.setattr(persistence, "api_request", fake_api_request)
 
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.delete_test(TEST_ID))
