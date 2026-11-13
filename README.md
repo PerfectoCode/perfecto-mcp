@@ -179,12 +179,6 @@ Perfecto MCP runs over **stdio** by default. It can also serve **streamable HTTP
 resolved per request from an `Authorization: Bearer` header and the target cloud from a `Perfecto-Cloud-Name`
 header, so one server can serve several users and clouds.
 
-**Hosted streamable HTTP** (`https://mcp.perfectomobile.com/mcp`):
-
-[![Add to Cursor (HTTP)](https://img.shields.io/badge/Add_to_Cursor-HTTP_install-blue?style=for-the-badge)](https://cursor.com/en-US/install-mcp?name=Perfecto%20MCP&config=eyJ1cmwiOiJodHRwczovL21jcC5wZXJmZWN0b21vYmlsZS5jb20vbWNwIiwiaGVhZGVycyI6eyJBdXRob3JpemF0aW9uIjoiQmVhcmVyIDxzZWN1cml0eVRva2VuPiIsIlBlcmZlY3RvLUNsb3VkLU5hbWUiOiI8Y2xvdWROYW1lPiJ9fQ%3D%3D) [![Add to VS Code (HTTP)](https://img.shields.io/badge/Add_to_VS_Code-HTTP_install-007ACC?style=for-the-badge&logo=visualstudiocode)](https://insiders.vscode.dev/redirect/mcp/install?name=Perfecto%20MCP&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fmcp.perfectomobile.com%2Fmcp%22%2C%22headers%22%3A%7B%22Authorization%22%3A%22Bearer%20%3CsecurityToken%3E%22%2C%22Perfecto-Cloud-Name%22%3A%22%3CcloudName%3E%22%7D%7D)
-
-After installing, replace `<securityToken>` and `<cloudName>` in the client configuration.
-
 To run your own server:
 
 ```bash
