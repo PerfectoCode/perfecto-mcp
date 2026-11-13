@@ -46,6 +46,15 @@ https://github.com/user-attachments/assets/10fffeee-b01d-4138-af7a-ea0018471730
 
 **Docker MCP Client Configuration**
 
+1. **Prerequisites:** [Docker](https://www.docker.com/products/docker-desktop/)
+2. **One-click install** or configure your MCP client manually:
+
+[![Add to Cursor (Docker)](https://img.shields.io/badge/Add_to_Cursor-Docker_install-blue?style=for-the-badge)](https://cursor.com/en-US/install-mcp?name=Perfecto%20MCP&config=eyJjb21tYW5kIjoiZG9ja2VyIiwiYXJncyI6WyJydW4iLCItLXB1bGw9YWx3YXlzIiwiLS1ybSIsIi1pIiwiLWUiLCJQRVJGRUNUT19DTE9VRF9OQU1FIiwiLWUiLCJQRVJGRUNUT19TRUNVUklUWV9UT0tFTiIsImdoY3IuaW8vcGVyZmVjdG9jb2RlL3BlcmZlY3RvLW1jcDpsYXRlc3QiXSwiZW52Ijp7IlBFUkZFQ1RPX0NMT1VEX05BTUUiOiIiLCJQRVJGRUNUT19TRUNVUklUWV9UT0tFTiI6IiJ9fQ%3D%3D) [![Add to VS Code (Docker)](https://img.shields.io/badge/Add_to_VS_Code-Docker_install-007ACC?style=for-the-badge&logo=visualstudiocode)](https://insiders.vscode.dev/redirect/mcp/install?name=Perfecto%20MCP&config=%7B%22command%22%3A%22docker%22%2C%22args%22%3A%5B%22run%22%2C%22--pull%3Dalways%22%2C%22--rm%22%2C%22-i%22%2C%22-e%22%2C%22PERFECTO_CLOUD_NAME%22%2C%22-e%22%2C%22PERFECTO_SECURITY_TOKEN%22%2C%22ghcr.io%2Fperfectocode%2Fperfecto-mcp%3Alatest%22%5D%2C%22env%22%3A%7B%22PERFECTO_CLOUD_NAME%22%3A%22%22%2C%22PERFECTO_SECURITY_TOKEN%22%3A%22%22%7D%7D)
+
+After installing, set `PERFECTO_CLOUD_NAME` and `PERFECTO_SECURITY_TOKEN` in your client's MCP settings.
+
+**Or configure manually** with the following settings:
+
 ```json
 {
   "mcpServers": {
@@ -78,7 +87,13 @@ https://github.com/user-attachments/assets/10fffeee-b01d-4138-af7a-ea0018471730
 **Manual Client Configuration (From Remote Source Code)**
 
 1. **Prerequisites:** [uv](https://docs.astral.sh/uv/) and Python 3.11+
-2. **Configure your MCP client** with the following settings:
+2. **One-click install** or configure your MCP client manually:
+
+[![Add to Cursor (uvx)](https://img.shields.io/badge/Add_to_Cursor-uvx_install-blue?style=for-the-badge)](https://cursor.com/en-US/install-mcp?name=Perfecto%20MCP&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyItLWZyb20iLCJnaXQraHR0cHM6Ly9naXRodWIuY29tL1BlcmZlY3RvQ29kZS9wZXJmZWN0by1tY3AuZ2l0QHYxLjIuMCIsIi1xIiwicGVyZmVjdG8tbWNwIiwiLS1tY3AiXSwiZW52Ijp7IlBFUkZFQ1RPX0NMT1VEX05BTUUiOiIiLCJQRVJGRUNUT19TRUNVUklUWV9UT0tFTl9GSUxFIjoiIn19) [![Add to VS Code (uvx)](https://img.shields.io/badge/Add_to_VS_Code-uvx_install-007ACC?style=for-the-badge&logo=visualstudiocode)](https://insiders.vscode.dev/redirect/mcp/install?name=Perfecto%20MCP&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22--from%22%2C%22git%2Bhttps%3A%2F%2Fgithub.com%2FPerfectoCode%2Fperfecto-mcp.git%40v1.2.0%22%2C%22-q%22%2C%22perfecto-mcp%22%2C%22--mcp%22%5D%2C%22env%22%3A%7B%22PERFECTO_CLOUD_NAME%22%3A%22%22%2C%22PERFECTO_SECURITY_TOKEN_FILE%22%3A%22%22%7D%7D)
+
+After installing, set `PERFECTO_CLOUD_NAME` and `PERFECTO_SECURITY_TOKEN_FILE` (full path to `perfecto-security-token.txt`) in your client's MCP settings.
+
+**Or configure manually** with the following settings:
 
 ```json
 {
@@ -86,11 +101,12 @@ https://github.com/user-attachments/assets/10fffeee-b01d-4138-af7a-ea0018471730
     "Perfecto MCP": {
       "command": "uvx",
       "args": [
-        "--from", "git+https://github.com/PerfectoCode/perfecto-mcp.git@v1.1.1",
+        "--from", "git+https://github.com/PerfectoCode/perfecto-mcp.git@v1.2.0",
         "-q", "perfecto-mcp", "--mcp"
       ],
       "env": {
-        "PERFECTO_CLOUD_NAME": "Set the cloud name value here"
+        "PERFECTO_CLOUD_NAME": "your_cloud_name",
+        "PERFECTO_SECURITY_TOKEN_FILE": "/path/to/perfecto-security-token.txt"
       }
     }
   }
@@ -163,6 +179,8 @@ Perfecto MCP runs over **stdio** by default. It can also serve **streamable HTTP
 resolved per request from an `Authorization: Bearer` header and the target cloud from a `Perfecto-Cloud-Name`
 header, so one server can serve several users and clouds.
 
+To run your own server:
+
 ```bash
 perfecto-mcp --mcp http
 ```
@@ -171,6 +189,30 @@ Transport resolution precedence: **CLI `--mcp` > `PERFECTO_MCP_TRANSPORT` > stdi
 
 See [docs/hosted-http.md](docs/hosted-http.md) for client configuration, auth behavior, health probes and
 environment variables.
+
+---
+
+## Confirmation
+
+Mutating tools can ask the MCP client to confirm before they run, using [elicitation](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation). The server decides which operations prompt based on `--confirm`.
+
+| Mode | Behavior |
+|------|----------|
+| `DELETE` | Confirm delete operations only (default) |
+| `CUD` | Confirm create, update, and delete operations |
+| `DISABLE` | No confirmation. An agent can run critical operations without human approval |
+
+```bash
+perfecto-mcp --mcp --confirm CUD
+```
+
+Add the flag to the MCP client `args` the same way, after `--mcp`. For Docker, pass it with the transport so it replaces the image command correctly:
+
+```bash
+docker run --rm -i -e PERFECTO_CLOUD_NAME=your_cloud_name -e PERFECTO_SECURITY_TOKEN=your_security_token ghcr.io/perfectocode/perfecto-mcp:latest --mcp --confirm CUD
+```
+
+Delete operations are `delete_test`, `delete_command`, and `delete_test_variable`. Create covers new tests, steps, variables, copies (`save_test_as`), and `execute_test`. Update covers edits, moves, saves, and `stop_live_executions`. Reads and lists are never confirmed. If the user declines, or the client cannot show the prompt, the operation does not run.
 
 ---
 

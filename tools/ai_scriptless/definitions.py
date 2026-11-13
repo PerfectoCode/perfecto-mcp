@@ -517,19 +517,56 @@ def validate_variable_bindings(
     spec = get_command_spec(command_id)
     errors: list[str] = []
     for name, raw in spec.normalize_argument_names(cmd_arguments).items():
-        if not isinstance(raw, dict) or "data_source" not in raw:
-            continue
-        if str(raw.get("data_source") or "").upper() != "VARIABLE":
-            continue
         parameter = contract.parameter(name)
         if parameter is None:
             continue
-        error = _variable_binding_error(name, raw.get("value"), parameter, script)
-        if error:
-            errors.append(error)
+        occurrences = raw if parameter.is_multivalued and isinstance(raw, list) else [raw]
+        for occurrence in occurrences:
+            if not isinstance(occurrence, dict) or "data_source" not in occurrence:
+                continue
+            if str(occurrence.get("data_source") or "").upper() != "VARIABLE":
+                continue
+            error = _variable_binding_error(name, occurrence.get("value"), parameter, script)
+            if error:
+                errors.append(error)
     if not errors:
         return None
     return f"Invalid cmd_arguments for command '{command_id}': " + " ".join(errors)
+
+
+def handset_constant_note(
+        command_id: str,
+        cmd_arguments: Optional[dict[str, Any]],
+        contract: Optional[CommandContract],
+) -> Optional[str]:
+    """Note when a device parameter is pinned to a literal device id.
+
+    Perfecto reserves one device per device declaration, not per argument, so a CONSTANT
+    device id is accepted on save and then fails the run with "No handset is available".
+    The step has to name a device variable the test declares.
+    """
+    if not cmd_arguments or not contract or not contract.parameters:
+        return None
+
+    spec = get_command_spec(command_id)
+    pinned = []
+    for name, raw in spec.normalize_argument_names(cmd_arguments).items():
+        if not isinstance(raw, dict) or "data_source" not in raw:
+            continue
+        if str(raw.get("data_source") or "").upper() != "CONSTANT":
+            continue
+        parameter = contract.parameter(name)
+        if parameter is None or (parameter.data_type or "").upper() != "HANDSET":
+            continue
+        pinned.append(name)
+    if not pinned:
+        return None
+    return (
+        f"Device parameter(s) set to a literal device id on '{command_id}': {', '.join(sorted(pinned))}. "
+        "The step saves, but the run fails with 'No handset is available': Perfecto reserves a device per "
+        "device declaration, not per argument. Bind it to a device variable instead "
+        "(add_test_variable with variable_type='device', then data_source VARIABLE)."
+    )
 
 
 def empty_mandatory_note(

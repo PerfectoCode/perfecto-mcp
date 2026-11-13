@@ -2,18 +2,22 @@
 Simple utilities for Perfecto MCP tools.
 """
 import base64
+import functools
 import json
 import os
 import platform
 import re
 import sys
 import traceback
+from collections.abc import Mapping
 from datetime import datetime, timezone
+from enum import Enum
 from importlib import resources
 from pathlib import Path
-from typing import Optional, Callable, Any, Dict
+from typing import Optional, Callable, Any, Dict, Awaitable
 
 import httpx
+from pydantic import BaseModel
 
 from config.security import validate_http_request_endpoint
 from config.token import PerfectoToken
@@ -104,6 +108,81 @@ def format_sanitized_traceback(exc: Optional[BaseException] = None) -> str:
     _sanitize_traceback_exception(tb_exception)
     formatted_traceback = "".join(tb_exception.format()).strip()
     return redact_system_paths(formatted_traceback)
+
+
+class ConfirmMode(Enum):
+    DELETE = "DELETE"  # Delete only
+    CUD = "CUD"  # Create, Update, Delete
+    DISABLE = "NONE"  # No confirmation
+
+
+_confirm_mode = ConfirmMode.DELETE
+
+
+class Operations(Enum):
+    CREATE = "C"  # Create
+    READ = "R"  # Read
+    UPDATE = "U"  # Update
+    DELETE = "D"  # Delete
+
+
+class Confirmation(BaseModel):
+    pass  # Empty model with no fields for simple accept/cancel without UI elements
+
+
+def register_confirm_mode(confirm_mode_value: ConfirmMode):
+    global _confirm_mode
+    _confirm_mode = confirm_mode_value
+
+
+def get_confirm_mode() -> ConfirmMode:
+    global _confirm_mode
+    return _confirm_mode
+
+
+def operation_need_confirmation(operation: Operations) -> bool:
+    confirm_mode = get_confirm_mode()
+    if confirm_mode == ConfirmMode.DELETE and operation in [Operations.DELETE]:
+        return True
+    elif confirm_mode == ConfirmMode.CUD and operation in [Operations.CREATE, Operations.UPDATE, Operations.DELETE]:
+        return True
+    else:
+        return False
+
+
+def require_confirmation(operation: Operations = Operations.READ,
+                         message="This action requires manual confirmation to continue"):
+    """
+    Ask the MCP client to confirm before a mutating operation runs.
+
+    The active ``--confirm`` mode decides which operations elicit. Clients that
+    cannot show the prompt fail closed: the operation does not run.
+    """
+    confirmation_schema = Confirmation
+    confirmation_unsupported_error = (
+        "Action not allowed: confirmation is required, but this MCP client "
+        "does not support elicitation for confirmation prompts."
+    )
+
+    def decorator(func: Callable[..., Awaitable]):
+        @functools.wraps(func)
+        async def wrapper(self, *args, **kwargs):
+            need_confirmation = operation_need_confirmation(operation)
+            confirmed = True  # Run operation by default
+            if need_confirmation:
+                try:
+                    result = await self.ctx.elicit(message=message, schema=confirmation_schema)
+                    confirmed = (result.action == "accept" and result.data)
+                except Exception:
+                    return BaseResult(error=confirmation_unsupported_error)
+            if confirmed:
+                return await func(self, *args, **kwargs)
+            else:
+                return BaseResult(result=["Action manually cancelled by the user."])
+
+        return wrapper
+
+    return decorator
 
 
 async def api_request(token: Optional[PerfectoToken], method: str, endpoint: str,
@@ -233,9 +312,9 @@ def normalize_action_args(arguments: Optional[Dict[str, Any]] = None) -> tuple[s
     ):
         arguments = inner
     action = str(arguments.get("action") or "").strip() or ""
-    args = dict(arguments.get("args") or {})
+    raw_args = arguments.get("args")
+    args = dict(raw_args) if isinstance(raw_args, Mapping) else {}
     for key, value in arguments.items():
         if key not in ("action", "args"):
             args[key] = value
     return action, args
-

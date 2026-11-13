@@ -1,6 +1,6 @@
 [project]
 name = "perfecto-mcp"
-version = "1.2.0"
+version = "1.3.0"
 description = "MCP server for Perfecto Cloud Platform"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,7 +34,7 @@ where = ["."]
 include = ["tools*", "config", "models", "formatters", "resources"]
 
 [tool.setuptools.package-data]
-"resources" = ["*.png"]
+"resources" = ["**/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

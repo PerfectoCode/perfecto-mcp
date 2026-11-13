@@ -317,6 +317,30 @@ class TestBuildRuntime:
         assert getattr(ctx.request_context, PERFECTO_USER_CONFIG_STATE_ATTR, None) == user_config
         assert manager.token is token
 
+    def test_configure_context_overwrites_stale_ctx_user_config(self):
+        runtime = build_runtime("streamable-http")
+        token = PerfectoToken("security-token", "demo")
+        request = SimpleNamespace(
+            state=SimpleNamespace(
+                **{
+                    PERFECTO_TOKEN_STATE_ATTR: token,
+                    PERFECTO_USER_CONFIG_STATE_ATTR: {"token": token, "cloud_name": "demo"},
+                }
+            )
+        )
+        stale_token = PerfectoToken("stale-token", "stale-cloud")
+        ctx = SimpleNamespace(
+            user_config={"token": stale_token, "cloud_name": "stale-cloud"},
+            request_context=SimpleNamespace(request=request),
+        )
+
+        user_config = runtime.configure_context(ctx)
+
+        assert ctx.user_config == user_config
+        assert ctx.user_config["token"] is token
+        assert ctx.user_config["cloud_name"] == "demo"
+        assert Manager(ctx).token is token
+
     def test_http_runtime_isolates_concurrent_sessions(self):
         """Each request context resolves only its own Bearer-derived token."""
         runtime = build_runtime("streamable-http")

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import sys
+from contextlib import contextmanager
 from typing import Literal, cast
 
 # Patch MCP ArgModelBase so tools with an "arguments" param receive the full payload
@@ -22,7 +23,14 @@ class _PatchedArgModelBase(_OriginalArgModelBase):
         return data
 
 
-func_metadata.ArgModelBase = _PatchedArgModelBase
+@contextmanager
+def _patched_arg_model_base():
+    original = func_metadata.ArgModelBase
+    func_metadata.ArgModelBase = _PatchedArgModelBase
+    try:
+        yield
+    finally:
+        func_metadata.ArgModelBase = original
 
 from mcp.server.fastmcp import FastMCP, Icon
 
@@ -34,6 +42,7 @@ from config.token import PerfectoToken, PerfectoTokenError
 from config.version import __version__, __executable__, __bundle__, __uvx__, get_version
 from server import register_tools
 from telemetry import init_telemetry
+from tools.utils import ConfirmMode, register_confirm_mode
 
 PERFECTO_SECURITY_TOKEN_FILE_NAME = "perfecto-security-token.txt"
 PERFECTO_SECURITY_TOKEN_FILE_PATH = os.getenv(SECURITY_TOKEN_FILE_ENV_NAME)
@@ -123,6 +132,7 @@ def to_wire_transport(logical_transport: str) -> Literal["stdio", "streamable-ht
 def build_mcp_server(
         log_level: str = "CRITICAL",
         transport: str = "stdio",
+        confirm_mode: ConfirmMode = ConfirmMode.DELETE,
 ) -> tuple[FastMCP, str]:
     """
     Build FastMCP + auth wiring for a logical CLI transport (stdio|http|docker).
@@ -131,6 +141,7 @@ def build_mcp_server(
     transport name (``stdio`` or ``streamable-http``).
     """
     init_telemetry("perfecto-mcp", __version__)
+    register_confirm_mode(confirm_mode)
     # docker and stdio share process-lifetime credentials; http uses Bearer per request.
     wire_transport = to_wire_transport(transport)
     app_runtime = build_runtime(
@@ -140,6 +151,25 @@ def build_mcp_server(
     instructions = """
 # Perfecto MCP Server
 
+## Proactive Knowledge Consultation
+
+- **ALWAYS consult Perfecto Skills and Help tools first** before answering questions about Perfecto features, authoring AI Scriptless tests, interpreting results, troubleshooting, or providing recommendations.
+- **Use `perfecto_skills`**: Access specialized knowledge about Perfecto capabilities (starting with AI Scriptless), best practices, and official getting-started guidance.
+- **Use `perfecto_help`**: Consult live Perfecto documentation (category_id='perfecto', subcategory_id_list=['ide'] for AI Scriptless).
+- **Golden rule**: If you're not 100% certain about something related to Perfecto, consult Skills or Help first, and if you need to search online, prioritize help.perfecto.io.
+
+## Confirmation
+
+Mutating tools may ask the MCP client to confirm before they run, using elicitation.
+- Default (`--confirm DELETE`): confirmation is requested for delete operations only.
+- `--confirm CUD`: confirmation is also requested for create and update operations.
+- `--confirm DISABLE`: no confirmation is requested.
+If the user declines, or the client cannot show the prompt, the operation does not run. Do not retry it without a new confirmation.
+
+## Important Guidelines
+- **Batch Operations**: When making multiple calls to the same tool, check if that tool supports a `batch` action and use it instead of separate calls.
+- **Don't assume / Don't invent**: If something is unclear, consult Skills/Help before responding.
+- **Provide resources**: Include markdown-formatted links to Perfecto help documentation when relevant.
 """
     mcp_kwargs: dict = {
         "instructions": instructions,
@@ -154,14 +184,20 @@ def build_mcp_server(
             stateless_http=False,
         )
     mcp = FastMCP("perfecto-mcp", **mcp_kwargs)
-    register_tools(mcp, app_runtime)
+    with _patched_arg_model_base():
+        register_tools(mcp, app_runtime)
     return mcp, wire_transport
 
 
-def run(log_level: str = "CRITICAL", transport: str = "stdio"):
+def run(
+        log_level: str = "CRITICAL",
+        transport: str = "stdio",
+        confirm_mode: ConfirmMode = ConfirmMode.DELETE,
+):
     mcp, runtime_transport = build_mcp_server(
         log_level=log_level,
         transport=transport,
+        confirm_mode=confirm_mode,
     )
     if runtime_transport == "stdio":
         mcp.run(transport=runtime_transport)
@@ -200,6 +236,20 @@ def main():
         help="Logging level (default: CRITICAL = critical errors only)"
     )
 
+    parser.add_argument(
+        "--confirm",
+        type=lambda s: s.strip().upper(),
+        choices=tuple(ConfirmMode.__members__),
+        default=ConfirmMode.DELETE.name,
+        help=(
+            "Confirmation mode for operations that create, update, or delete:\n"
+            " DELETE - Confirm delete operations only (default)\n"
+            " CUD - Confirm create, update and delete operations\n"
+            " DISABLE - Disable confirmation "
+            "(warning: an agent can perform critical operations without human approval)"
+        ),
+    )
+
     args = parser.parse_args()
     
     if args.mcp is not None:
@@ -210,7 +260,11 @@ def main():
             elif transport == "http":
                 os.environ["MCP_DOCKER"] = "false"
             init_logging(args.log_level)
-            run(log_level=args.log_level.upper(), transport=transport)
+            run(
+                log_level=args.log_level.upper(),
+                transport=transport,
+                confirm_mode=ConfirmMode[args.confirm],
+            )
         except ValueError as e:
             parser.error(str(e))
     else:
