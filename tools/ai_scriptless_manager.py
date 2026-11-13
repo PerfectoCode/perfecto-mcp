@@ -50,7 +50,9 @@ from tools.ai_scriptless_script import (
     new_empty_script,
     normalize_if_statement_aliases,
     persist_script,
-    script_write_lock,
+    copy_script,
+    delete_script,
+    with_script_locks,
     find_condition_statement,
     set_element_error_policy,
     set_element_enabled,
@@ -63,6 +65,7 @@ from tools.ai_scriptless_script import (
     validate_variable_bindings,
 )
 from tools.ai_scriptless.definitions import SUPPORTED_ERROR_POLICIES
+from tools.ai_scriptless.endpoints import ScriptStoreUnknown, script_endpoints
 from tools.utils import (
     Operations,
     api_request,
@@ -143,8 +146,7 @@ class AiScriptlessManager(Manager):
         page_index = args.get("page_index", 1)
         skip = (page_size * page_index) - page_size
 
-        tree_url = perfecto.get_ai_scriptless_api_url(self.token.cloud_name)
-        tree_url = tree_url + "/scripts/tree"
+        tree_url = (await script_endpoints(self.token)).tree_url
         tests_result = await api_request(self.token, "GET", endpoint=tree_url,
                                          result_formatter=format_ai_scriptless_tests,
                                          result_formatter_params={"page_size": page_size, "skip": skip,
@@ -170,8 +172,7 @@ class AiScriptlessManager(Manager):
 
     @token_verify
     async def list_filter_values(self, filter_names: list[str]) -> BaseResult:
-        tree_url = perfecto.get_ai_scriptless_api_url(self.token.cloud_name)
-        tree_url = tree_url + "/scripts/tree"
+        tree_url = (await script_endpoints(self.token)).tree_url
         filter_values_result = await api_request(self.token, "GET", endpoint=tree_url,
                                                  result_formatter=format_ai_scriptless_tests_filter_values)
         filter_values = {}
@@ -458,8 +459,7 @@ class AiScriptlessManager(Manager):
     async def view_test_structure(self, test_id: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
-        script_url = perfecto.get_ai_scriptless_api_url(self.token.cloud_name)
-        script_url = script_url + f"/script?itemKey={quote(test_id, safe='')}"
+        script_url = (await script_endpoints(self.token)).script_url + f"?itemKey={quote(test_id, safe='')}"
         result = await api_request(self.token, "GET", endpoint=script_url,
                                  result_formatter=format_test_structure,
                                  result_formatter_params={"item_key": test_id})
@@ -652,14 +652,9 @@ class AiScriptlessManager(Manager):
             return BaseResult(error="test_id is required")
         if not name:
             return BaseResult(error="name is required")
-        async with script_write_lock(test_id):
-            payload_result = await fetch_script_payload(self.token, test_id)
-            if payload_result.error:
-                return payload_result
-            script = payload_result.result.get("script", {})
         item_key = build_item_key(visibility, folder, name)
         result = _append_step_path_refresh_notes(
-            await persist_script(self.token, item_key, script, snapshot_comment=comment)
+            await copy_script(self.token, test_id, item_key, snapshot_comment=comment)
         )
         return _append_ui_access_info(result, self.token.cloud_name, item_key)
 
@@ -826,13 +821,7 @@ class AiScriptlessManager(Manager):
     async def delete_test(self, test_id: str) -> BaseResult:
         if not test_id:
             return BaseResult(error="test_id is required (itemKey from list_tests)")
-        delete_url = perfecto.get_ai_scriptless_api_url(self.token.cloud_name) + "/repositories"
-        return await api_request(
-            self.token,
-            "DELETE",
-            endpoint=delete_url,
-            params={"itemKey": test_id},
-        )
+        return await delete_script(self.token, test_id)
 
     @token_verify
     @require_confirmation(operation=Operations.UPDATE)
@@ -853,14 +842,20 @@ class AiScriptlessManager(Manager):
         target_visibility = visibility or source_visibility
         move_url = perfecto.get_repository_management_api_url(self.token.cloud_name) + "/artifacts"
         body = build_move_test_body(test_id, folder, target_visibility)
-        result = await api_request(self.token, "PATCH", endpoint=move_url, json=body)
-        if result.error:
-            return result
         target_item_key = build_item_key(
             target_visibility,
             folder,
             item_key_file_name(test_id).removesuffix(".xml"),
         )
+
+        async def move_now() -> BaseResult:
+            return await api_request(self.token, "PATCH", endpoint=move_url, json=body)
+
+        # A save in flight on either test must land before the move, or it would bring
+        # the source back or be overwritten at the target.
+        result = await with_script_locks(self.token, (test_id, target_item_key), move_now)
+        if result.error:
+            return result
         result.result = {
             "source_item_key": test_id,
             "target_item_key": target_item_key,
@@ -1455,6 +1450,8 @@ Hints:
 
         try:
             return await run_tool(f"{TOOLS_PREFIX}_ai_scriptless", action, ctx, _dispatch)
+        except ScriptStoreUnknown as exc:
+            return BaseResult(error=str(exc))
         except httpx.HTTPStatusError:
             return BaseResult(
                 error=f"Error: {format_sanitized_traceback()}"

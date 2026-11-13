@@ -25,7 +25,7 @@ import pytest
 from config.perfecto import SUPPORT_MESSAGE
 from models.result import BaseResult
 from tools import ai_scriptless_manager
-from tools.ai_scriptless import definitions
+from tools.ai_scriptless import definitions, persistence
 from tools.ai_scriptless.variables import add_script_variable
 from tools.ai_scriptless.elements import (
     build_flow_element,
@@ -658,8 +658,8 @@ class TestListAndReadOperations:
         monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
         monkeypatch.setattr(
             ai_scriptless_manager.perfecto,
-            "get_ai_scriptless_api_url",
-            lambda _cloud: "https://demo.app.perfectomobile.com/perfectomobile/ai-scriptless/api",
+            "get_ai_scriptless_script_asset_api_url",
+            lambda _cloud: "https://demo.perfectomobile.com/scriptless-mobile-engine/script-asset-manager/api",
         )
 
         manager = AiScriptlessManager(make_ctx(perfecto_token))
@@ -669,7 +669,7 @@ class TestListAndReadOperations:
         assert result.result.count == 1
         assert "PRIVATE:My Folder/Login.xml" in result.result.items[0]
         assert result.info is not None
-        assert captured["endpoint"].endswith("/scripts/tree")
+        assert captured["endpoint"].endswith("/script-directory-repository/tree")
 
     def test_list_tests_propagates_api_error(self, perfecto_token, monkeypatch):
         async def fake_api_request(*_args, **_kwargs):
@@ -1286,21 +1286,16 @@ class TestRepositoryOperations:
         assert result.error is None
         assert captured["snapshot_comment"] == "checkpoint"
 
-    def test_save_test_as_fetches_and_persists_under_new_key(self, perfecto_token, monkeypatch):
-        source_script = _script_with_steps("wait")
+    def test_save_test_as_copies_under_new_key(self, perfecto_token, monkeypatch):
         persisted: dict = {}
 
-        async def fake_fetch(_token, _test_id):
-            return BaseResult(result={"script": source_script})
-
-        async def fake_persist(_token, item_key, script, saved_script=None, snapshot_comment=None):
-            persisted["item_key"] = item_key
-            persisted["flow_count"] = len(script.get("flowElements", []))
+        async def fake_copy(_token, source_key, target_key, snapshot_comment=None):
+            persisted["source_key"] = source_key
+            persisted["item_key"] = target_key
             persisted["comment"] = snapshot_comment
             return BaseResult(result={"draft_key": "d-2", "status": "ok"})
 
-        monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch)
-        monkeypatch.setattr(ai_scriptless_manager, "persist_script", fake_persist)
+        monkeypatch.setattr(ai_scriptless_manager, "copy_script", fake_copy)
 
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.save_test_as(
@@ -1312,19 +1307,63 @@ class TestRepositoryOperations:
         ))
 
         assert result.error is None
+        assert persisted["source_key"] == TEST_ID
         assert persisted["item_key"] == "PUBLIC:Archive/Copy.xml"
-        assert persisted["flow_count"] == 1
         assert persisted["comment"] == "branched"
 
-    def test_save_test_as_propagates_fetch_error(self, perfecto_token, monkeypatch):
-        async def fake_fetch(_token, _test_id):
+    def test_save_test_as_propagates_copy_error(self, perfecto_token, monkeypatch):
+        async def fake_copy(_token, _source_key, _target_key, snapshot_comment=None):
             return BaseResult(error="source missing")
 
-        monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch)
+        monkeypatch.setattr(ai_scriptless_manager, "copy_script", fake_copy)
 
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.save_test_as(TEST_ID, "Copy"))
         assert result.error == "source missing"
+
+    @pytest.mark.parametrize("edited", ["source", "target"])
+    def test_move_waits_for_a_change_in_flight(self, perfecto_token, monkeypatch, edited):
+        target_key = "PRIVATE:Archive/Test.xml"
+        order = []
+        saving, finish_save = asyncio.Event(), asyncio.Event()
+
+        async def store_api_request(_token, method, endpoint=None, **_kwargs):
+            if method == "GET":
+                script = new_empty_script()
+                script["flowElements"] = [build_flow_element("wait")]
+                return BaseResult(result={"script": script})
+            if "script-draft-repository" in endpoint:
+                saving.set()
+                await finish_save.wait()
+                return BaseResult(result={"key": "draft-1"})
+            order.append("save")
+            return BaseResult(result={"status": "success"})
+
+        async def move_api_request(_token, method, endpoint=None, **_kwargs):
+            order.append("move")
+            return BaseResult(result={"status": "moved"})
+
+        monkeypatch.setattr(persistence, "api_request", store_api_request)
+        monkeypatch.setattr(ai_scriptless_manager, "api_request", move_api_request)
+        manager = AiScriptlessManager(make_ctx(perfecto_token))
+
+        def adding(script):
+            script["flowElements"].append(build_flow_element("wait"))
+
+        async def both():
+            edited_key = TEST_ID if edited == "source" else target_key
+            change = asyncio.create_task(persistence.load_and_mutate(perfecto_token, edited_key, adding))
+            await saving.wait()
+            move = asyncio.create_task(manager.move_test(TEST_ID, "Archive"))
+            await asyncio.sleep(0.05)
+            finish_save.set()
+            return await asyncio.gather(change, move)
+
+        _change, moved = asyncio.run(both())
+
+        assert moved.error is None
+        assert moved.result["target_item_key"] == target_key
+        assert order == ["save", "move"]  # the save lands before the move
 
     def test_move_test_propagates_api_error(self, perfecto_token, monkeypatch):
         async def fake_api_request(*_args, **_kwargs):
@@ -1371,23 +1410,29 @@ class TestRepositoryOperations:
 
         async def fake_api_request(_token, method, endpoint=None, **kwargs):
             captured["method"] = method
+            captured["endpoint"] = endpoint
             captured["params"] = kwargs.get("params")
             return BaseResult(result={"status": "deleted"})
 
-        monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
+        monkeypatch.setattr(persistence, "api_request", fake_api_request)
 
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.delete_test(TEST_ID))
 
         assert result.error is None
         assert captured["method"] == "DELETE"
+        # The settings fixture picks the newer store, which deletes through the script resource.
+        assert captured["endpoint"] == (
+            "https://demo.perfectomobile.com/scriptless-mobile-engine/script-asset-manager/api"
+            "/script-repository/script"
+        )
         assert captured["params"]["itemKey"] == TEST_ID
 
     def test_delete_test_propagates_api_error(self, perfecto_token, monkeypatch):
         async def fake_api_request(*_args, **_kwargs):
             return BaseResult(error="delete denied")
 
-        monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
+        monkeypatch.setattr(persistence, "api_request", fake_api_request)
 
         manager = AiScriptlessManager(make_ctx(perfecto_token))
         result = asyncio.run(manager.delete_test(TEST_ID))
@@ -1533,6 +1578,12 @@ def _setup_dispatcher_mocks(monkeypatch, captured: dict | None = None, persisted
             persisted["flow_count"] = len(payload.get("flowElements", []))
         return BaseResult(result={"draft_key": "d-1", "status": "ok"})
 
+    async def fake_copy(_token, _source_key, target_key, snapshot_comment=None):
+        if persisted is not None:
+            persisted["item_key"] = target_key
+            persisted["comment"] = snapshot_comment
+        return BaseResult(result={"draft_key": "d-1", "status": "ok"})
+
     async def fake_load_and_mutate(_token, test_id, mutator, snapshot_comment=None):
         payload = copy.deepcopy(script)
         try:
@@ -1549,6 +1600,7 @@ def _setup_dispatcher_mocks(monkeypatch, captured: dict | None = None, persisted
     monkeypatch.setattr(ai_scriptless_manager, "api_request", fake_api_request)
     monkeypatch.setattr(ai_scriptless_manager, "fetch_script_payload", fake_fetch)
     monkeypatch.setattr(ai_scriptless_manager, "persist_script", fake_persist)
+    monkeypatch.setattr(ai_scriptless_manager, "copy_script", fake_copy)
     monkeypatch.setattr(ai_scriptless_manager, "load_and_mutate", fake_load_and_mutate)
 
 

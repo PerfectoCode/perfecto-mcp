@@ -1,7 +1,7 @@
 """
 numOfFlowElements on nested containers (Branch, LogicalStep, Loop, IfStatement).
 
-Perfecto wire format (observed on beta API):
+Perfecto wire format (observed on the API):
 - Script / LogicalStep / Loop / Branch: len(flowElements)
 - IfStatement: 3 + direct children across all branches (not recursive)
 - Leaf Action/Validation: no numOfFlowElements field

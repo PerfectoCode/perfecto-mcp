@@ -21,7 +21,7 @@ import pytest
 from config.auth import PERFECTO_USER_CONFIG_STATE_ATTR
 from config.token import PerfectoToken
 from models.result import BaseResult
-from tools.ai_scriptless import definitions
+from tools.ai_scriptless import definitions, endpoints, persistence
 from tools.utils import ConfirmMode, register_confirm_mode
 
 
@@ -54,6 +54,44 @@ def offline_command_definitions(monkeypatch):
     monkeypatch.setattr(definitions, "api_request", offline_api_request)
     yield
     definitions.reset_command_contract_cache()
+
+
+@pytest.fixture(autouse=True)
+def quick_save_read_back(monkeypatch):
+    """Read a save back once, without waiting.
+
+    load_and_mutate reads the script back until the change shows; against an
+    offline fake that never changes, waiting would only slow the suite. Tests of
+    that behaviour set their own timing.
+    """
+    monkeypatch.setattr(persistence, "CONFIRM_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(persistence, "CONFIRM_EVERY_SECONDS", 0.0)
+
+
+@pytest.fixture(autouse=True)
+def offline_lock_owner(monkeypatch):
+    """Answer the current-user lookup that every script write makes for its lock.
+
+    The fakes in the suite serve scripts, not users. Tests of the lookup itself
+    call the real one, kept as persistence.script_lock_owner before this runs.
+    """
+    async def owner(_token, _item_key):
+        return BaseResult(result="test-user")
+
+    monkeypatch.setattr(persistence, "script_lock_owner", owner)
+
+
+@pytest.fixture(autouse=True)
+def offline_scriptless_settings(monkeypatch):
+    """Answer the feature settings lookup that picks the script store with both settings on (the newer store).
+
+    Tests of the older store, and of the lookup itself, set their own; the real lookup
+    is kept as endpoints.read_scriptless_settings before this runs.
+    """
+    async def both_on(_token):
+        return True, True
+
+    monkeypatch.setattr(endpoints, "read_scriptless_settings", both_on)
 
 
 @pytest.fixture
